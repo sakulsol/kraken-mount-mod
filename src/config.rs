@@ -4,18 +4,10 @@
 use serde_json::{json, Value};
 pub const CONFIG_PATH: &str = "/data/krakenmount/config.toml";
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum FakelibMode {
-    Emulators,
-    Full,
-    Off,
-}
-
 #[derive(Clone, PartialEq, Debug)]
 pub struct Settings {
     pub scan_paths: Vec<String>,
     pub inject_ampr: bool,
-    pub game_fakelib: FakelibMode,
     pub backports: bool,
     pub scan_interval_secs: u64,
     pub low_space_gb: u64,
@@ -30,7 +22,6 @@ impl Default for Settings {
         Settings {
             scan_paths: Vec::new(),
             inject_ampr: true,
-            game_fakelib: FakelibMode::Emulators,
             backports: true,
             scan_interval_secs: 10,
             low_space_gb: 20,
@@ -45,7 +36,6 @@ impl Default for Settings {
 const HELP: &[(&str, &str)] = &[
     ("scanpath", "replaces the default scan roots (/data/homebrew, /data/etaHEN/games, <drive>/homebrew, ...)"),
     ("inject_ampr", "true = copy /data/krakenmount/ampr/* on top of every game's fakelib (a change only refreshes fakelib/)"),
-    ("game_fakelib", "game's own fakelib: emulators | full | off"),
     ("backports", "true = apply backports/<TID>* from the game's scan root, then the other roots, then /data/homebrew"),
     ("scan_interval_seconds", "scan loop period, 1..3600"),
     ("low_space_gb", "warn when /data free space is below this"),
@@ -79,14 +69,8 @@ fn set(s: &mut Settings, key: &str, v: &str) -> Result<(), String> {
         }
         "scanpath" => return Err(format!("expected an absolute path, got {v:?}")),
         "inject_ampr" => s.inject_ampr = flag(v)?,
-        "game_fakelib" => {
-            s.game_fakelib = match v {
-                "emulators" => FakelibMode::Emulators,
-                "full" => FakelibMode::Full,
-                "off" => FakelibMode::Off,
-                _ => return Err(format!("expected emulators|full|off, got {v:?}")),
-            }
-        }
+        // Removed setting (the game's fakelib is always used in full): ignored, dropped on the next save.
+        "game_fakelib" => {}
         "backports" => s.backports = flag(v)?,
         "scan_interval_seconds" => match num(v)? {
             n @ 1..=3600 => s.scan_interval_secs = n,
@@ -99,14 +83,6 @@ fn set(s: &mut Settings, key: &str, v: &str) -> Result<(), String> {
         _ => return Err("unknown key".into()),
     }
     Ok(())
-}
-
-fn fakelib_str(m: FakelibMode) -> &'static str {
-    match m {
-        FakelibMode::Emulators => "emulators",
-        FakelibMode::Full => "full",
-        FakelibMode::Off => "off",
-    }
 }
 
 /// A TOML string at the start of `v` ("basic" with \\ \" \n \t escapes, or 'literal') and the rest.
@@ -251,7 +227,6 @@ fn render(s: &Settings) -> String {
                 out += &format!("scanpath = [{}]\n", items.join(", "));
             }
             "inject_ampr" => out += &format!("{k} = {}\n", s.inject_ampr),
-            "game_fakelib" => out += &format!("{k} = {}\n", toml_quote(fakelib_str(s.game_fakelib))),
             "backports" => out += &format!("{k} = {}\n", s.backports),
             "scan_interval_seconds" => out += &format!("{k} = {}\n", s.scan_interval_secs),
             "low_space_gb" => out += &format!("{k} = {}\n", s.low_space_gb),
@@ -296,7 +271,6 @@ pub fn to_json(s: &Settings) -> Value {
     json!({
         "scanpath": s.scan_paths,
         "inject_ampr": s.inject_ampr,
-        "game_fakelib": fakelib_str(s.game_fakelib),
         "backports": s.backports,
         "scan_interval_seconds": s.scan_interval_secs,
         "low_space_gb": s.low_space_gb,

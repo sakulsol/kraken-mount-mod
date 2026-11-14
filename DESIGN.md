@@ -10,6 +10,7 @@ and installed into `/data/krakenmount/ampr/` at start.
 
 ## Supported sources (nothing else)
 - **FPKG**: a dump-forge debug `.pkg` file directly in a scan root.
+  Sparse layout extents (holes: a kind-0x40 boundary up to the next boundary) are read as zeros.
 - **Folder**: a directory directly in a scan root with `eboot.bin` and `sce_sys/param.json`.
   Packing: `ampr_zstd.index` present = zstd, else `ampr_assets.index` = lz4, else plain.
 - Any drive. The cache is always on the internal SSD.
@@ -38,7 +39,6 @@ A flat TOML subset: `key = value` with strings, `true`/`false`, integers and arr
 |---|---|---|
 | `scanpath` | (defaults above) | array of paths; replaces the default scan roots |
 | `inject_ampr` | true | copy `/data/krakenmount/ampr/*` on top of every game's fakelib (a change only refreshes `fakelib/`) |
-| `game_fakelib` | emulators | game's own fakelib: `emulators` (AppContent, GameUpdate, NpEntitlementAccess, PlayGo, Ampr), `full`, `off` |
 | `backports` | true | apply `<scan root>/backports/<TID>*` |
 | `scan_interval_seconds` | 10 | scan loop period (1..3600) |
 | `low_space_gb` | 20 | warn when `/data` free space is below this |
@@ -56,32 +56,53 @@ Invalid values are logged and replaced by the default. The web UI edits the same
   newline: `kraken/<pkg file name>`, relative to `/app0`, the file ng opens; missing means stale), `ampr_emu.index` +
   `ampr_assets.index` (`src/ampr_index.rs`; every non-extracted file packed, fakelib and
   backport files loose). Backport files (except its fakelib) are copied loose over pkg files.
+  A file with sparse holes stays packed: each hole block is a RAW chunk of pack 1,
+  `kraken_zero.dat` (an AMPRDAT3 volume in the cache: one 64 KiB header page + 256 KiB zeros,
+  written only when a hole is packed; ng's pkg mode opens packs 1 and up as AMPRDAT3 volumes,
+  `ampr-sys` `rt/pack/pkg.rs` `build_pack_path_pkg`). A file whose holes do not start and end on
+  its 256 KiB block grid is extracted loose instead (logged with the title id and path).
   The dir itself is never deleted: `/system_ex/app/<TID>` is a nullfs of it.
 - `/app0` is writable, so a game may write into its cache (pkg) or its dump folder (folder, also on
   USB). `.built` (written before `.done`) lists what the build created; a rebuild removes only those
   paths (a dir only once empty), so files the game wrote stay. A failed build removes what it wrote.
   A cache without `.built` (older build) is emptied. Only Purge deletes the game's files.
 - `fakelib/` composition: base = backport `fakelib/` (all files) if present, else the game's
-  `fakelib/` filtered by `game_fakelib`; `libkernel.sprx` always dropped. `fakelib2/` (SMP) wins
+  `fakelib/` (all files; the old `game_fakelib` setting is gone and ignored in `config.toml`);
+  `libkernel.sprx` always dropped. `fakelib2/` (SMP) wins
   over `fakelib/` and is used as-is; it is never indexed or copied as game files. All files 0777.
   Then, with `inject_ampr`, every file of `/data/krakenmount/ampr/` (not `libkernel.sprx`) is copied on top,
   so ours wins over the game's own `libSceAmpr.sprx`. `.ampr` records what was copied (name, size,
-  mtime); when the ampr dir or `inject_ampr` changes, `check` says `Fakelib` and only `fakelib/` is
-  recomposed (`refresh_fakelib`), no extraction or re-registration. `fakelib/` is not in the AMPR index.
+  mtime); when the ampr dir or `inject_ampr` changes, or `.done` still has a `game_fakelib` other
+  than `full` (a cache built before the setting was removed), `check` says `Fakelib` and only `fakelib/` is
+  recomposed (`refresh_fakelib`, which then rewrites `.done` with its own mtime), no extraction or re-registration. `fakelib/` is not in the AMPR index.
 - A folder game's cache is only `fakelib/`, `.ampr`, `.built`, `.done`: nothing of the game is copied.
 - Fresh when `.done` exists, its JSON stamp equals the expected one
-  (`{"v":1,"kind","source","size","game_fakelib","backport","fakelib"}`), and every input's
+  (`{"v":1,"kind","source","size","backport","fakelib"}`; extra keys of an older stamp are ignored), and every input's
   mtime is older than `.done`'s mtime. Inputs: FPKG = the .pkg, backport dir (recursive);
   folder = `eboot.bin`, `sce_sys/param.json`, its lib dir and files (not the folder itself: the game
-  writes there). Otherwise rebuilt.
+  writes there). Otherwise rebuilt. A pkg's `.done` also carries `pkg_id` (FNV-1a 64 of the size,
+  the first 64 KiB, the 4 KiB CNT header and the last 64 KiB), a folder's `folder_id` (FNV-1a 64 of
+  each input file's path relative to the folder and size, plus the bytes of every input but
+  `eboot.bin`: `param.json` and the lib dir's files); neither is
+  compared by the freshness check.
+- Moved (`Fresh::Moved(old source)`, `relink`): the stamp differs only in "source" (and "fakelib"
+  when it is the folder's own lib dir under the moved path), the old source path is gone, and the
+  files are the same: pkg = `pkg_id` equal (the moved .pkg may be newer than `.done`), its other
+  inputs older than `.done`; folder = `folder_id` equal (mtimes not compared: a copy-then-delete
+  move relinks too). A copy while the old one
+  still exists is a duplicate, never a move. Relink: pkg = new stamp, `kraken.image` rewritten when
+  the file name changed, `.done` mtime now, extracted files and indexes kept (ng checks the pkg's
+  size only); folder = new stamp, `.done` mtime now. Anything else is Stale (a cache stamped before `pkg_id`/`folder_id`
+  existed rebuilds once when its game moves).
 - Purge (settings): delete caches of titles not in the library (`register::unmount_title` first;
   a dir whose unmount fails is skipped and logged), empty and rebuild the rest.
 
 ## Flow (`src/main.rs`)
 Start: create dirs, load config, take port 8097 (asks an older copy to quit), install the bundled
 `libSceAmpr.sprx` when `ampr/libSceAmpr.sprx` is missing or matches `ampr.bundled` (an older bundled
-copy; a file put there by hand is kept), ampr chmod, web thread,
-launch watcher thread, klog thread when `debug`. Loop every `scan_interval_seconds` or on
+copy; a file put there by hand is kept), ampr chmod, web thread, klog thread when `debug`, then wait
+(2 s poll, one toast per reason, `waiting` in `/api/state` for the UI banner) until kstuff answers its KEKCALL_CHECK probe (`sys::kstuff_loaded`,
+SMP `sm_kstuff_is_loaded`) and no `shadowmountplus.elf` process runs, then the launch watcher thread. Loop every `scan_interval_seconds` or on
 wake: reload config, scan, then for each game: freshness check, build if stale or forced,
 register (once per run, and after every rebuild), status `ready`. A game whose cache is fresh and
 which is already registered (`register::is_registered`) is not re-registered: only `register::mount`
@@ -89,12 +110,18 @@ redoes the missing app0 nullfs (gone after a reboot); for such a pkg the scan re
 the cache's `sce_sys/param.json` and never opens the .pkg. A fresh title registered by this run still
 gets `register::mount` every scan (a no-op when app0 is mounted there; redoes it after a USB replug);
 a title that leaves the scan is forgotten, so it goes through the full path when it is back.
+A moved game (`Fresh::Moved`, not forced): a folder's `/system_ex/app/<TID>` stack is redone on the
+new folder first (`register::remount`, backport unionfs included, never MNT_FORCE), then
+`cache::relink`; logged with the title id and both paths, toast `i18n::moved`; then the usual
+fresh path. A failed relink or remount falls back to a rebuild.
 Running game: while `launch::watch` reports a live session (`running`), the loop does no
 scan/build/register/purge (a game starting mid-scan stops the scan before the next title);
 rescan/rebuild/purge requests stay queued and run after the game exits (2 s poll).
 Toasts: `sceNotificationSend` system toast (dump-forge/SMP JSON, icon `/user/data/krakenmount/notify-icon.png`),
-the old `sceKernelSendNotificationRequest` only as fallback. A failed game is retried
-only when its inputs change or a rebuild is forced. Duplicate title ids: first scan root wins,
+the old `sceKernelSendNotificationRequest` only as fallback. Toast texts (`src/i18n.rs`) follow the console language
+(`sceSystemServiceParamGetInt` lang, read per toast; dump-forge's 11: en ru zh de es fr ja pt it ko ar), English when it
+cannot be read; "Kraken Mount", title names and paths stay as they are. A failed game is retried
+only when its inputs change or a rebuild is forced. Duplicate title ids: a folder beats a pkg, then the first scan root wins;
 the others show `duplicate`. Low `/data` space (checked before the games, before and after each
 build, after the scan): toast once per run and a UI banner.
 
@@ -120,9 +147,8 @@ No overlay when neither layer applies.
 ```rust
 // config.rs
 pub const CONFIG_PATH: &str = "/data/krakenmount/config.toml";
-#[derive(Clone, Copy, PartialEq, Eq, Debug)] pub enum FakelibMode { Emulators, Full, Off }
 #[derive(Clone, PartialEq, Debug)]
-pub struct Settings { pub scan_paths: Vec<String>, pub inject_ampr: bool, pub game_fakelib: FakelibMode,
+pub struct Settings { pub scan_paths: Vec<String>, pub inject_ampr: bool,
   pub backports: bool, pub scan_interval_secs: u64, pub low_space_gb: u64, pub notify: bool, pub log: bool, pub debug: bool }
 impl Default for Settings
 pub fn load() -> Settings;                       // creates the file with defaults when missing
@@ -156,7 +182,9 @@ pub const AMPR_DIR: &str = "/data/krakenmount/ampr";
 pub fn dir(tid: &str) -> std::path::PathBuf;
 pub fn peek_pkg(pkg: &std::path::Path) -> std::io::Result<(String, String, String)>; // title_id, name, version (via scan::parse_param)
 pub fn pkg_file(pkg: &std::path::Path, name: &str) -> std::io::Result<Vec<u8>>; // one file, e.g. "sce_sys/icon0.png"
-pub enum Fresh { Fresh, Missing, Stale(String), Fakelib(String) }
+pub enum Fresh { Fresh, Missing, Stale(String), Fakelib(String), Moved(std::path::PathBuf /* old source */) }
+pub fn relink(src: &Source, s: &Settings, from: &std::path::Path) -> std::io::Result<()>; // Moved: no rebuild
+pub fn pkg_id(pkg: &std::path::Path) -> std::io::Result<String>;   // sampled identity, see Cache
 pub fn refresh_fakelib(src: &Source, s: &Settings) -> std::io::Result<()>; // Fakelib: fakelib/ only
 pub fn check(src: &Source, s: &Settings) -> Fresh;
 pub fn build(src: &Source, s: &Settings) -> std::io::Result<()>;   // always rebuilds
@@ -173,6 +201,7 @@ pub fn register(title_id: &str, app0: &std::path::Path, sce_sys: &std::path::Pat
 pub fn register_tile(port: u16);
 pub fn is_registered(title_id: &str) -> bool;
 pub fn mount(title_id: &str, app0: &std::path::Path, backport: Option<&std::path::Path>) -> std::io::Result<()>;
+pub fn remount(title_id: &str, app0: &std::path::Path, backport: Option<&std::path::Path>) -> std::io::Result<()>; // moved folder: whole stack
 pub fn unmount_title(tid: &str) -> std::io::Result<()>;   // every layer at /system_ex/app/<TID>, never MNT_FORCE
 pub fn uninstall(tid: &str) -> std::io::Result<()>;       // sceAppInstUtilAppUnInstall
 
@@ -185,7 +214,7 @@ pub fn watch(titles: Arc<Mutex<HashSet<String>>>, running: Arc<Mutex<HashSet<Str
   `GET /bg.jpg` the background (`src/bg.jpg`); `GET /kraken.appcache` the AppCache manifest
   (version + page hash, with `/bg.jpg` in its `CACHE` section). These four are `no-cache`, the rest `no-store`.
 - `GET /api/state`:
-  `{version, busy, paused, running:[TID], games:[{title_id, title_name, version, path, kind:"pkg"|"folder", packing:"plain"|"zstd"|"lz4"|null,
+  `{version, busy, paused, waiting:"kstuff"|"shadowmount"|null, running:[TID], games:[{title_id, title_name, version, path, kind:"pkg"|"folder", packing:"plain"|"zstd"|"lz4"|null,
   drive, size, status:"pending"|"checking"|"building"|"ready"|"error"|"duplicate", error, cache_size, cache_built, backport}],
   drives:[{mount, label, kind, total, free}], cache:{path, size, free, low_space, ampr_present}, log:[last 100 lines of the last 64 KiB]}`
 - `GET /api/settings` -> settings JSON; `POST /api/settings` (JSON body) -> save, apply, rescan.

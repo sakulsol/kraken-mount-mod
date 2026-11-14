@@ -1,7 +1,6 @@
 //! The Kraken layout descriptor (`naps_pkg_layout.dat`), walked in chunks into a compact block
 //! list. Port of `VF/kraken_image.rs:728-1036` (`describe`) and `FP/mount.rs:35-283` (`KBlock`,
-//! `Kraken::new`, `stored`). Blocks may be raw or Kraken-compressed; byte shuffles and sparse
-//! extents are refused.
+//! `Kraken::new`, `stored`).
 
 use alloc::format;
 use alloc::vec;
@@ -25,7 +24,8 @@ const CHUNK: usize = 4096;
 const REPACK: &str = "repack with --kraken stored";
 
 /// One mount block: `len` logical bytes at `logical`, stored in `stored_len` bytes at
-/// `stored_at` in `pfs_image.dat`, decoded with `desc`.
+/// `stored_at` in `pfs_image.dat`, decoded with `desc`. A sparse block (a hole: all zeros,
+/// nothing stored) has `stored_len` 0, `stored_at` 0 and a default `desc`.
 #[derive(Clone, Copy)]
 pub(crate) struct KBlock {
     pub logical: u64,
@@ -41,6 +41,11 @@ impl KBlock {
         self.stored_len == self.len
             && self.desc.mode & 0b1_1011 == 0
             && u64::from(self.desc.even_len) == u64::from(self.len).min(HALF)
+    }
+
+    /// A hole: reads as zeros, no stored bytes behind it.
+    pub fn sparse(&self) -> bool {
+        self.stored_len == 0
     }
 }
 
@@ -91,12 +96,13 @@ impl Kraken {
     }
 
     /// The stored (`pfs_image.dat`) ranges `(at, len)` behind mount bytes `off..off + len`,
-    /// clipped to that range, in mount order.
+    /// clipped to that range, in mount order. Sparse blocks have no stored bytes and are
+    /// skipped, so a hole never maps to image bytes.
     pub fn stored(&self, off: u64, len: u64) -> impl Iterator<Item = (u64, u64)> + '_ {
         let end = off + len;
         let first = self.blocks.partition_point(|b| b.logical + u64::from(b.len) <= off);
         let last = self.blocks.partition_point(|b| b.logical < end).max(first);
-        self.blocks[first..last].iter().map(move |b| {
+        self.blocks[first..last].iter().filter(|b| !b.sparse()).map(move |b| {
             let s = off.max(b.logical);
             let e = end.min(b.logical + u64::from(b.len));
             (b.stored_at + (s - b.logical), e - s)
@@ -114,7 +120,9 @@ impl Kraken {
 
 impl Kraken {
     /// Walk descriptor `naps` (the way `describe` does) for an image of `image_size` stored
-    /// bytes. Raw and compressed blocks are kept; byte-shuffled ones are refused.
+    /// bytes. Raw, compressed and sparse blocks are kept (a kind-0x40 boundary before the
+    /// mount's end opens a hole: zeros, nothing stored, see [`KBlock`]); byte-shuffled blocks
+    /// and other compression types are refused as `Unsupported`.
     pub fn open<R: PRead>(io: &R, naps: &OuterFile, image_size: u64) -> Result<Self, Error> {
         if naps.size < 16 || naps.size > MAX_DESCRIPTOR {
             return Err(corrupt(format!("layout descriptor of {} bytes", naps.size)));
@@ -144,7 +152,7 @@ impl Kraken {
         if naps.size < (rec_at + records * 9) as u64 {
             return Err(corrupt("layout descriptor shorter than its records"));
         }
-        let (bounds, mount) = boundaries(io, naps, fidx_at, files, ublocks)?;
+        let (bounds, sparse, mount) = boundaries(io, naps, fidx_at, files, ublocks)?;
         let next_bound = |x: u64| {
             bounds.get(bounds.partition_point(|&b| b <= x)).copied().unwrap_or(mount)
         };
@@ -170,6 +178,7 @@ impl Kraken {
                 }
                 continue;
             }
+            fill_sparse(&sparse, &mut logical, &mut blocks);
             if strict && i > 0 && nibble != logical & 0xF {
                 return Err(corrupt(format!("record {i}: the exact start's low nibble disagrees")));
             }
@@ -182,11 +191,9 @@ impl Kraken {
             let cap = logical + (next_bound(logical).min(mount) - logical).min(UBLOCK);
             let next = if f(66, 1) == 1 { i + 2 } else { i + 1 };
             let len = if next + 1 < records {
-                let at16 = (logical & !(WINDOW - 1)) | ((rec.get(next)? as u64 & 0x3FFF) << 4);
-                let at16 = if at16 <= logical & !0xF { at16 + WINDOW } else { at16 };
+                let at14 = rec.get(next)? as u64 & 0x3FFF;
                 let low = if strict { (rec.get(next - 1)? >> 68) as u64 & 0xF } else { logical & 0xF };
-                let exact = at16 | low;
-                if at16 + 16 <= cap || (strict && exact < cap) { exact - logical } else { cap - logical }
+                block_len(logical, cap, at14, low, strict, hole_end(&sparse, cap))
             } else {
                 cap - logical
             };
@@ -219,6 +226,7 @@ impl Kraken {
             cursor = end;
             logical += len;
         }
+        fill_sparse(&sparse, &mut logical, &mut blocks);
         if logical != mount {
             return Err(corrupt(format!("blocks tile to {logical:#x}, the mount is {mount:#x}")));
         }
@@ -227,18 +235,59 @@ impl Kraken {
     }
 }
 
+/// Length of the block at `logical`, capped at `cap` (next boundary, mount end or 256 KiB).
+/// The next block record starts at window offset `at14 << 4`, low nibble `low` (trusted only
+/// when `strict`): a smaller-block build says a block ends before `cap` only that way.
+/// `after_hole` is where the walk resumes when a hole starts at `cap`: the next record then
+/// describes the block past the hole, and its window offset (that of the hole's end, which may
+/// wrap into this block) says nothing about this one. When it matches the hole's end, this
+/// block runs to the hole. A block before a hole always ends at the hole's start: blocks tile
+/// the mount and a hole is filled only from its exact start (`fill_sparse`).
+/// ponytail: a smaller-block build (128 KiB) whose hole ends at the same window offset as this
+/// block's next 128 KiB step is read as running to the hole; no such layout has been seen.
+fn block_len(logical: u64, cap: u64, at14: u64, low: u64, strict: bool, after_hole: Option<u64>) -> u64 {
+    if after_hole.is_some_and(|a| (a % WINDOW) >> 4 == at14 && (!strict || a & 0xF == low)) {
+        return cap - logical;
+    }
+    let at16 = (logical & !(WINDOW - 1)) | (at14 << 4);
+    let at16 = if at16 <= logical & !0xF { at16 + WINDOW } else { at16 };
+    let exact = at16 | low;
+    if at16 + 16 <= cap || (strict && exact < cap) { exact - logical } else { cap - logical }
+}
+
+/// Where the walk resumes after the hole(s) starting exactly at `at`; `None` when none does.
+fn hole_end(sparse: &[(u64, u64)], mut at: u64) -> Option<u64> {
+    let start = at;
+    while let Ok(i) = sparse.binary_search_by_key(&at, |s| s.0) {
+        at = sparse[i].1;
+    }
+    (at != start).then_some(at)
+}
+
+/// Zero blocks (at most 256 KiB each) for the hole(s) starting exactly at `logical`. Adjacent
+/// holes chain: each kind-0x40 boundary opens one up to the next boundary.
+fn fill_sparse(sparse: &[(u64, u64)], logical: &mut u64, blocks: &mut Vec<KBlock>) {
+    while let Ok(i) = sparse.binary_search_by_key(logical, |s| s.0) {
+        let end = sparse[i].1;
+        while *logical < end {
+            let len = (end - *logical).min(UBLOCK) as u32;
+            blocks.push(KBlock { logical: *logical, stored_at: 0, len, stored_len: 0, desc: Desc::default() });
+            *logical += u64::from(len);
+        }
+    }
+}
+
 /// The descriptor's boundary table (`fidx`, 6 B per entry: 40-bit mount offset, kind byte),
 /// read in chunks: the sorted, deduplicated boundaries and the mount's end (the last entry).
-/// A kind-0x40 boundary before the end opens a sparse extent, which this MVP refuses.
 fn boundaries<R: PRead>(
     io: &R,
     naps: &OuterFile,
     fidx_at: usize,
     files: usize,
     ublocks: u64,
-) -> Result<(Vec<u64>, u64), Error> {
+) -> Result<(Vec<u64>, Vec<(u64, u64)>, u64), Error> {
     let mut bounds = Vec::with_capacity(files);
-    let mut sparse_at: Option<u64> = None;
+    let mut sparse_starts = Vec::new();
     let mut buf = vec![0u8; CHUNK * 6];
     let mut done = 0usize;
     while done < files {
@@ -248,7 +297,7 @@ fn boundaries<R: PRead>(
         for r in chunk.chunks_exact(6) {
             let off = u64::from_le_bytes([r[0], r[1], r[2], r[3], r[4], 0, 0, 0]);
             if r[5] == 0x40 {
-                sparse_at = Some(sparse_at.map_or(off, |a: u64| a.min(off)));
+                sparse_starts.push(off);
             }
             bounds.push(off);
         }
@@ -258,12 +307,19 @@ fn boundaries<R: PRead>(
     if mount.div_ceil(UBLOCK) != ublocks || bounds.iter().any(|&b| b > mount) {
         return Err(corrupt("the boundary table disagrees with the mount's size"));
     }
-    // The mount's end carries kind 0x40 too; only one before it is a hole.
-    if let Some(at) = sparse_at.filter(|&a| a < mount) {
-        return Err(unsupported(format!("the layout has a sparse extent at mount {at:#x}; {REPACK}")));
-    }
     bounds.sort_unstable();
     bounds.dedup();
     bounds.shrink_to_fit();
-    Ok((bounds, mount))
+    // The mount's end carries kind 0x40 too; only one before it is a hole. A hole runs to the
+    // next boundary of any kind (ps5upload-fpkg `describe`: "up to the next boundary nothing is
+    // stored"). A hole over several boundaries carries kind 0x40 at each, and `fill_sparse`
+    // chains them; a hole cut short by a boundary of another kind leaves the walk expecting a
+    // record there: the next record's window offset disagrees (unless both lie the same
+    // distance into their 256 KiB windows) and the walk fails as corrupt. Not seen.
+    sparse_starts.sort_unstable();
+    sparse_starts.dedup();
+    let sparse = sparse_starts.into_iter().filter(|&at| at < mount)
+        .map(|at| (at, bounds[bounds.partition_point(|&b| b <= at)]))
+        .collect();
+    Ok((bounds, sparse, mount))
 }

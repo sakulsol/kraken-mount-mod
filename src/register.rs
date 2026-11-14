@@ -384,6 +384,13 @@ pub fn mount(title_id: &str, app0: &Path, backport: Option<&Path>) -> io::Result
     ctx(mount_inner(title_id, app0, backport, true), || format!("mount {title_id} ({})", app0.display()))
 }
 
+/// `mount` for a moved folder game: the whole stack is redone on the new `app0` even when the
+/// backport overlay on top is current (the nullfs under it still shows the old folder). Never
+/// MNT_FORCE: a running game's stack fails with EBUSY.
+pub fn remount(title_id: &str, app0: &Path, backport: Option<&Path>) -> io::Result<()> {
+    ctx(mount_inner(title_id, app0, backport, false), || format!("remount {title_id} ({})", app0.display()))
+}
+
 /// `keep_active`: keep a live overlay of the same backport (fresh cache). A full register
 /// (after a build) remounts the stack, since a recreated game folder leaves the old lower nullfs.
 fn mount_inner(title_id: &str, app0: &Path, backport: Option<&Path>, keep_active: bool) -> io::Result<()> {
@@ -428,7 +435,7 @@ fn tile_param_json(port: u16) -> Vec<u8> {
 }
 
 /// FNV-1a 64, hex.
-fn fnv1a(bytes: &[u8]) -> String {
+pub(crate) fn fnv1a(bytes: &[u8]) -> String {
     let h = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| {
         (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3)
     });

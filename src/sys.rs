@@ -209,3 +209,23 @@ pub fn notify(msg: &str) {
         sceKernelSendNotificationRequest(0, &mut req, std::mem::size_of::<NotifyRequest>(), 0);
     }
 }
+
+/// kstuff answers its KEKCALL_CHECK probe (SMP sm_kstuff_is_loaded, ps5-kstuff's contract):
+/// syscall 0xffffffff00000027 with zero arguments returns 0 with carry clear.
+pub fn kstuff_loaded() -> bool {
+    let (result, err): (u64, u8);
+    // SAFETY: the same register contract as SMP's probe; it reads and writes no memory of ours.
+    unsafe {
+        std::arch::asm!(
+            "syscall",
+            "setc {err}",
+            err = out(reg_byte) err,
+            inlateout("rax") 0xffff_ffff_0000_0027u64 => result,
+            in("rdi") 0u64, in("rsi") 0u64, in("rdx") 0u64,
+            inout("r10") 0u64 => _, inout("r8") 0u64 => _, inout("r9") 0u64 => _,
+            out("rcx") _, out("r11") _,
+            options(nostack),
+        );
+    }
+    err == 0 && result == 0
+}

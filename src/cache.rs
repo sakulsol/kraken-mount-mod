@@ -7,7 +7,7 @@
 //! made, a rebuild removes only that); purge() deletes them too.
 //! /data/krakenmount/ampr is never copied here: launch.rs mounts it as its own layer.
 use crate::ampr_index::{self, Chunk, IndexFile, Kraken};
-use crate::config::{FakelibMode, Settings};
+use crate::config::Settings;
 use crate::scan::{Kind, Source};
 use kraken_mount_pkg::{Entry, Pkg, PRead};
 use std::collections::{BTreeMap, HashSet};
@@ -31,14 +31,6 @@ pub const PKG_MOUNT_DIR: &str = "kraken";
 /// pkg caches: one line, no newline, the .pkg relative to /app0 (`kraken/<file name>`); ng opens /app0/ + it.
 const IMAGE_FILE: &str = "kraken.image";
 const CHUNK: usize = 4 << 20;
-/// SMP sm_fakelib.c fakelib_emulator_names.
-const EMULATORS: [&str; 5] = [
-    "libSceAppContent.sprx",
-    "libSceGameUpdate.sprx",
-    "libSceNpEntitlementAccess.sprx",
-    "libScePlayGo.sprx",
-    "libSceAmpr.sprx",
-];
 
 /// The .pkg file as a kraken_mount_pkg reader (newtype: the orphan rule forbids `impl PRead for File`).
 struct Io(File);
@@ -126,7 +118,7 @@ fn exec_mode(path: &Path) -> Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o777))
 }
 
-/// `e`'s Kraken blocks as index chunks.
+/// `e`'s Kraken blocks as index chunks (a sparse hole stays a zero chunk: stored_len 0).
 fn chunks(p: &Pkg, e: &Entry) -> Result<Vec<Chunk>> {
     let blocks = p.blocks(e).map_err(vfs)?;
     let mut out = Vec::with_capacity(blocks.len());
@@ -284,14 +276,6 @@ pub fn purge(keep: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn mode_name(m: FakelibMode) -> &'static str {
-    match m {
-        FakelibMode::Emulators => "emulators",
-        FakelibMode::Full => "full",
-        FakelibMode::Off => "off",
-    }
-}
-
 /// The backport's lib dir in SMP order (sm_fakelib.c resolve_game_fakelib_source_for_path):
 /// fakelib2 (exclusive), then fakelib.
 fn bp_lib(src: &Source) -> Option<PathBuf> {
@@ -308,13 +292,12 @@ fn lib_dir(src: &Source) -> Option<PathBuf> {
     })
 }
 
-pub fn stamp(src: &Source, s: &Settings) -> serde_json::Value {
+pub fn stamp(src: &Source, _s: &Settings) -> serde_json::Value {
     serde_json::json!({
         "v": 1,
         "kind": if src.kind == Kind::Pkg { "pkg" } else { "folder" },
         "source": src.path.to_string_lossy(),
         "size": src.size,
-        "game_fakelib": mode_name(s.game_fakelib),
         "backport": src.backport.as_ref().map(|b| b.to_string_lossy()),
         // Which lib dir was used: a removed or newly added fakelib/fakelib2 changes it.
         "fakelib": lib_dir(src).map(|p| p.to_string_lossy().into_owned()),
@@ -351,8 +334,104 @@ pub enum Fresh {
     Fresh,
     Missing,
     Stale(String),
-    /// Only fakelib/ is out of date (the ampr files or inject_ampr changed): refresh_fakelib.
+    /// Only fakelib/ is out of date (the ampr files or inject_ampr changed, or a legacy game_fakelib
+    /// stamp): refresh_fakelib.
     Fakelib(String),
+    /// The same game moved from this old source path (the old path is gone): relink, no rebuild.
+    Moved(PathBuf),
+}
+
+/// `.done` key (pkg only, not part of `stamp`): `pkg_id` of the .pkg the cache was built from.
+const PKG_ID: &str = "pkg_id";
+const ID_SPAN: usize = 0x10000;
+
+/// A .pkg's identity: FNV-1a 64 of its size, first 64 KiB (the FIH header), the 4 KiB CNT header
+/// (content id, digests) and last 64 KiB. ponytail: a sample, not a full hash (128 KiB read, not the
+/// whole pkg); together with the old path being gone it tells a moved pkg from another build.
+pub fn pkg_id(pkg: &Path) -> Result<String> {
+    let f = File::open(pkg)?;
+    let len = f.metadata()?.len();
+    let mut v = len.to_le_bytes().to_vec();
+    let mut feed = |b: &[u8]| v.extend_from_slice(b);
+    let mut buf = vec![0u8; ID_SPAN];
+    let head = ID_SPAN.min(len as usize);
+    f.read_exact_at(&mut buf[..head], 0)?;
+    feed(&buf[..head]);
+    let cnt = buf.get(0x58..0x60).map_or(0, |b| u64::from_le_bytes(b.try_into().unwrap()));
+    if cnt.checked_add(0x1000).is_some_and(|e| e <= len) {
+        f.read_exact_at(&mut buf[..0x1000], cnt)?;
+        feed(&buf[..0x1000]);
+    }
+    let tail = ID_SPAN.min(len as usize);
+    f.read_exact_at(&mut buf[..tail], len - tail as u64)?;
+    feed(&buf[..tail]);
+    Ok(crate::register::fnv1a(&v))
+}
+
+/// `.done` key (folder only, not part of `stamp`): `folder_id` of the folder the cache was built from.
+const FOLDER_ID: &str = "folder_id";
+
+/// A folder game's identity: FNV-1a 64 of each input file's path (relative to the folder) and
+/// size, plus the bytes of every input but eboot.bin (param.json and the lib dir's files, which
+/// the cache's fakelib/ is a copy of). ponytail: eboot.bin by size only (it can be large) and no
+/// mtimes (a copy to exFAT rounds them); another dump differs in eboot.bin's size, a lib or param.json.
+fn folder_id(src: &Source, s: &Settings) -> String {
+    let mut v = Vec::new();
+    let mut feed = |b: &[u8]| v.extend_from_slice(b);
+    let eboot = src.path.join("eboot.bin");
+    let mut files = inputs(src, s);
+    files.sort();
+    for p in files {
+        let Ok(m) = fs::symlink_metadata(&p) else { continue };
+        if m.is_file() {
+            feed(p.strip_prefix(&src.path).unwrap_or(&p).to_string_lossy().as_bytes());
+            feed(&m.len().to_le_bytes());
+            if p != eboot {
+                feed(&fs::read(&p).unwrap_or_default());
+            }
+        }
+    }
+    crate::register::fnv1a(&v)
+}
+
+/// Whether stamp `new` is `old` with only the source's location changed: every key equal but
+/// "source" (and "fakelib" when it is the game's own lib dir under the moved source).
+fn only_moved(old: &serde_json::Value, new: &serde_json::Value) -> bool {
+    let (Some(from), Some(to)) = (old["source"].as_str(), new["source"].as_str()) else { return false };
+    if from == to {
+        return false;
+    }
+    new.as_object().into_iter().flatten().all(|(k, v)| match k.as_str() {
+        "source" => true,
+        "fakelib" if old.get(k) != Some(v) => {
+            let rebased = old[k].as_str().and_then(|p| p.strip_prefix(from)).map(|rest| format!("{to}{rest}"));
+            rebased.is_some() && rebased.as_deref() == v.as_str()
+        }
+        _ => old.get(k) == Some(v),
+    })
+}
+
+/// The move decision: a relink only when the stamps differ by location alone, the old source is
+/// gone (a copy while the old one still exists is a duplicate), and the files are the same (pkg:
+/// `pkg_id` equal; folder: every input older than `.done`, as after a plain move).
+fn is_move(old: &serde_json::Value, new: &serde_json::Value, old_exists: bool, same_files: impl FnOnce() -> bool) -> bool {
+    only_moved(old, new) && !old_exists && same_files()
+}
+
+/// `is_move`'s file check. ponytail: a cache built before `pkg_id` was stamped is rebuilt once
+/// when its pkg moves.
+fn same_files(src: &Source, s: &Settings, old: &serde_json::Value, done_mtime: SystemTime) -> bool {
+    if src.kind != Kind::Pkg {
+        // folder_id covers the bytes of everything a folder cache is made from (param.json, the
+        // lib dir), so a copy with new mtimes (copy, then delete the old one) still relinks.
+        return old[FOLDER_ID].as_str() == Some(folder_id(src, s).as_str());
+    }
+    // The moved .pkg itself may be newer than `.done` (a copy to another drive): its id decides;
+    // the other inputs (the backport, copied into the cache) must be older than `.done`.
+    let older = inputs(src, s).iter().filter(|p| **p != src.path).all(|p| {
+        fs::symlink_metadata(p).and_then(|m| m.modified()).is_ok_and(|m| m < done_mtime)
+    });
+    older && old[PKG_ID].as_str().is_some_and(|id| pkg_id(&src.path).ok().as_deref() == Some(id))
 }
 
 /// The ampr files fakelib/ should carry: {name: [size, mtime]} of /data/krakenmount/ampr's
@@ -383,6 +462,14 @@ pub fn check(src: &Source, s: &Settings) -> Fresh {
     let old: serde_json::Value =
         fs::read(&done).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
     let new = stamp(src, s);
+    if old.get("source") != new.get("source") {
+        if let Some(from) = old["source"].as_str().map(PathBuf::from) {
+            let exists = fs::symlink_metadata(&from).is_ok();
+            if is_move(&old, &new, exists, || same_files(src, s, &old, done_mtime)) {
+                return Fresh::Moved(from);
+            }
+        }
+    }
     for (k, v) in new.as_object().into_iter().flatten() {
         if old.get(k) != Some(v) {
             return Fresh::Stale(format!("{k} changed"));
@@ -402,6 +489,11 @@ pub fn check(src: &Source, s: &Settings) -> Fresh {
             return Fresh::Stale(format!("{} changed", p.display()));
         }
     }
+    // A `.done` from before the game_fakelib setting was removed: emulators/off filtered fakelib/.
+    // refresh_fakelib recomposes it in full and rewrites `.done` without the key; "full" is fresh.
+    if old.get("game_fakelib").is_some_and(|m| m != "full") {
+        return Fresh::Fakelib("game_fakelib setting removed".into());
+    }
     let had: serde_json::Value = fs::read(dir(&src.title_id).join(AMPR_STATE))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
@@ -412,16 +504,9 @@ pub fn check(src: &Source, s: &Settings) -> Fresh {
     Fresh::Fresh
 }
 
-/// Whether fakelib file `name` goes into the cache's fakelib/ (`all`: a backport lib dir or a game's
-/// fakelib2, which SMP uses as-is).
-fn keep_fakelib(name: &str, s: &Settings, all: bool) -> bool {
+/// Whether fakelib file `name` goes into the cache's fakelib/: everything but libkernel.sprx.
+fn keep_fakelib(name: &str) -> bool {
     !name.eq_ignore_ascii_case("libkernel.sprx")
-        && (all
-            || match s.game_fakelib {
-                FakelibMode::Full => true,
-                FakelibMode::Off => false,
-                FakelibMode::Emulators => EMULATORS.iter().any(|k| name.eq_ignore_ascii_case(k)),
-            })
 }
 
 /// Copies the regular files directly in `from` that pass `keep` into `to`, 0777.
@@ -444,7 +529,7 @@ fn loose(path: String, size: u64) -> IndexFile {
 }
 
 /// fakelib/ from scratch: the backport's lib dir (all files) if any, else the game's own (pkg:
-/// extracted from `pkg`; folder: copied), filtered by game_fakelib; then the ampr files on top
+/// extracted from `pkg`; folder: copied), all of it; libkernel.sprx never; then the ampr files on top
 /// (inject_ampr). All 0777. Writes AMPR_STATE.
 fn compose_fakelib(src: &Source, s: &Settings, pkg: Option<(&Io, &Pkg)>) -> Result<()> {
     let dir = dir(&src.title_id);
@@ -454,9 +539,8 @@ fn compose_fakelib(src: &Source, s: &Settings, pkg: Option<(&Io, &Pkg)>) -> Resu
         _ => {}
     }
     fs::create_dir_all(&fakelib)?;
-    let all_game_libs = |two: bool| two && s.game_fakelib != FakelibMode::Off;
     if let Some(bp) = bp_lib(src) {
-        copy_flat(&bp, &fakelib, |n| keep_fakelib(n, s, true))?;
+        copy_flat(&bp, &fakelib, keep_fakelib)?;
     } else if let Some((io, p)) = pkg {
         // SMP order inside the game: fakelib2/ (used as-is) wins over fakelib/.
         let game_lib = if p.files().any(|e| e.path.to_ascii_lowercase().starts_with(LIB_DIRS[0])) {
@@ -464,19 +548,17 @@ fn compose_fakelib(src: &Source, s: &Settings, pkg: Option<(&Io, &Pkg)>) -> Resu
         } else {
             LIB_DIRS[1]
         };
-        let two = game_lib == LIB_DIRS[0];
         let mut buf = vec![0u8; CHUNK];
         for e in p.files().filter(|e| !e.is_dir) {
             let lower = e.path.to_ascii_lowercase();
             let Some(name) = lower.strip_prefix(game_lib) else { continue };
             let name = &e.path[e.path.len() - name.len()..];
-            if !name.contains('/') && keep_fakelib(name, s, all_game_libs(two)) {
+            if !name.contains('/') && keep_fakelib(name) {
                 extract(p, io, &e, &fakelib.join(name), &mut buf)?;
             }
         }
     } else if let Some(lib) = lib_dir(src) {
-        let two = lib.file_name().is_some_and(|n| n == "fakelib2");
-        copy_flat(&lib, &fakelib, |n| keep_fakelib(n, s, all_game_libs(two)))?;
+        copy_flat(&lib, &fakelib, keep_fakelib)?;
     }
     // Our ampr-emu-ng on top of whatever the game or backport ships (its own libSceAmpr.sprx included).
     if s.inject_ampr {
@@ -491,11 +573,19 @@ fn compose_fakelib(src: &Source, s: &Settings, pkg: Option<(&Io, &Pkg)>) -> Resu
 pub fn refresh_fakelib(src: &Source, s: &Settings) -> Result<()> {
     log!("{}: refreshing {}", src.title_id, dir(&src.title_id).join("fakelib").display());
     let pkg = if src.kind == Kind::Pkg { Some(open(&src.path)?) } else { None };
-    compose_fakelib(src, s, pkg.as_ref().map(|(io, p)| (io, p))).map_err(|e| {
-        let e = Error::new(e.kind(), format!("{} ({}): fakelib refresh: {e}", src.title_id, src.path.display()));
-        log!("{e}");
-        e
-    })
+    compose_fakelib(src, s, pkg.as_ref().map(|(io, p)| (io, p)))
+        .and_then(|()| {
+            // check() matched the stamp and inputs: the current stamp with `.done`'s own mtime
+            // (drops a legacy game_fakelib key, keeps the input checks).
+            let d = dir(&src.title_id);
+            let mtime = fs::metadata(d.join(DONE))?.modified()?;
+            write_done(&d, src, s, mtime)
+        })
+        .map_err(|e| {
+            let e = Error::new(e.kind(), format!("{} ({}): fakelib refresh: {e}", src.title_id, src.path.display()));
+            log!("{e}");
+            e
+        })
 }
 
 /// Always rebuilds `src`'s cache. Errors carry the title id and source path and are logged.
@@ -535,10 +625,42 @@ fn finish(dir: &Path, src: &Source, s: &Settings, start: SystemTime, before: &Ha
 }
 
 /// Writes `.done` with mtime `start`, so an input changed during the build is newer than it.
+/// A pkg's stamp also gets its `pkg_id` (for `is_move`; check() ignores the extra key).
 fn write_done(dir: &Path, src: &Source, s: &Settings, start: SystemTime) -> Result<()> {
     let done = dir.join(DONE);
-    fs::write(&done, stamp(src, s).to_string())?;
+    let mut st = stamp(src, s);
+    st[if src.kind == Kind::Pkg { PKG_ID } else { FOLDER_ID }] =
+        if src.kind == Kind::Pkg { pkg_id(&src.path)? } else { folder_id(src, s) }.into();
+    fs::write(&done, st.to_string())?;
     File::options().write(true).open(&done)?.set_modified(start)
+}
+
+/// Fresh::Moved: points the cache at `src`, the same game moved from `from`, without a rebuild.
+/// pkg: new stamp source, kraken.image rewritten when the file name changed, `.done` mtime now
+/// (the moved .pkg may be newer than the old `.done`; its pkg_id matched); extracted files and the
+/// indexes stay (ng checks the pkg's size only, not its mtime). Folder: new stamp, `.done` mtime
+/// now; main.rs remounts /system_ex/app/<TID>. Errors carry the title id and both paths.
+pub fn relink(src: &Source, s: &Settings, from: &Path) -> Result<()> {
+    let d = dir(&src.title_id);
+    log!("{}: moved {} -> {}; relinking {}", src.title_id, from.display(), src.path.display(), d.display());
+    let r = (|| {
+        if src.kind == Kind::Pkg {
+            let name = src.path.file_name().and_then(|n| n.to_str());
+            let name = name.ok_or_else(|| bad(format!("{}: file name is not UTF-8", src.path.display())))?;
+            let image = format!("{PKG_MOUNT_DIR}/{name}");
+            if fs::read_to_string(d.join(IMAGE_FILE)).ok().as_deref() != Some(image.as_str()) {
+                fs::write(d.join(IMAGE_FILE), image)?;
+            }
+        }
+        // `.done` mtime now: the moved inputs may be newer than the old one (a copy). A legacy
+        // game_fakelib `.done` never gets here: it has no pkg_id/folder_id, so it is never a move.
+        write_done(&d, src, s, SystemTime::now())
+    })();
+    r.map_err(|e| {
+        let e = Error::new(e.kind(), format!("{} ({} -> {}): relink: {e}", src.title_id, from.display(), src.path.display()));
+        log!("{e}");
+        e
+    })
 }
 
 fn build_inner(src: &Source, s: &Settings, before: &HashSet<PathBuf>) -> Result<()> {
@@ -566,13 +688,26 @@ fn build_inner(src: &Source, s: &Settings, before: &HashSet<PathBuf>) -> Result<
             if LIB_DIRS.iter().any(|d| lower.starts_with(d)) {
                 continue;
             }
-            let chunks = if extracted(e.path) {
-                extract(p, io, &e, &dir.join(e.path), &mut buf)?;
+            // A file with sparse holes stays in the pkg: its holes are zero chunks (ampr_index).
+            // ponytail: one whose holes do not start and end on its 256 KiB block grid cannot be
+            // indexed and is extracted whole to the internal SSD (its size, holes included).
+            let packed = if extracted(e.path) {
                 None
+            } else if p.has_sparse(&e) {
+                let c = chunks(p, &e)?;
+                if ampr_index::packable(e.size, &c) {
+                    Some(c)
+                } else {
+                    log!("{}: {}: sparse holes off the 256 KiB grid, extracting {} bytes", src.title_id, e.path, e.size);
+                    None
+                }
             } else {
                 Some(chunks(p, &e)?)
             };
-            files.insert(lower, IndexFile { path: e.path.to_string(), size: e.size, chunks });
+            if packed.is_none() {
+                extract(p, io, &e, &dir.join(e.path), &mut buf)?;
+            }
+            files.insert(lower, IndexFile { path: e.path.to_string(), size: e.size, chunks: packed });
         }
     }
     compose_fakelib(src, s, pkg.as_ref().map(|(io, p)| (io, p)))?;

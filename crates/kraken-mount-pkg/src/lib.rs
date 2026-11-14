@@ -1,7 +1,7 @@
 //! Read a ps5-dump-forge debug FPKG (`.pkg`) in place: plaintext (`PPRPLAIN-NOAUTH!`), Kraken
-//! layout at any level (`stored` or Kraken-compressed blocks, no byte shuffles), no LIH patch.
-//! Every file maps to a list of Kraken blocks; files whose blocks are all raw also map to
-//! plaintext byte runs of the `.pkg`.
+//! layout at any level (`stored` or Kraken-compressed blocks, sparse holes read as zeros, no
+//! byte shuffles), no LIH patch. Every file maps to a list of Kraken blocks (a hole as zero
+//! blocks); files whose blocks are all raw also map to plaintext byte runs of the `.pkg`.
 //!
 //! Ported from ps5-dump-forge (`crates/ps5-dump-forge-fpkg` and its vendored fpkg crate),
 //! GPL-3.0-or-later. See ps5-dump-forge's fpkg reader for the format.
@@ -37,7 +37,8 @@ pub enum Error {
     /// Not a PS5 package at all (no FIH magic, too short, a PS4 package).
     NotPs5(String),
     /// A PS5 package (or a request on one file) this crate does not serve: retail, LIH patch,
-    /// encrypted, byte-shuffled; extents of a compressed file; blocks of an unaligned file.
+    /// encrypted, byte-shuffled; extents of a compressed or sparse file; blocks of an unaligned
+    /// file. (Sparse extents themselves are served: as zeros, and as zero blocks by `blocks`.)
     Unsupported(String),
     /// The package contradicts itself or is truncated.
     Corrupt(String),
@@ -205,6 +206,10 @@ fn file_blocks(image: &pkg::Image, w: &tree::Walked, tmp: &mut Vec<Extent>, out:
         return Err(alloc::format!("{}: its data (mount {:#x}) does not start on a block boundary", w.path, w.logical));
     }
     for b in range {
+        if b.sparse() {
+            out.push(Block { raw_len: b.len, pkg_off: 0, stored_len: 0, compressed: false, desc: b.desc });
+            continue;
+        }
         tmp.clear();
         image.image.pkg_extents(b.stored_at, u64::from(b.stored_len), tmp).map_err(|e| alloc::format!("{}: {e}", w.path))?;
         let [run] = tmp.as_slice() else {
@@ -239,8 +244,10 @@ pub struct Extent {
 
 /// One Kraken block of a file: `raw_len` logical bytes, stored as `stored_len` contiguous bytes
 /// at `pkg_off` in the `.pkg`. A raw block's stored bytes are its logical bytes
-/// (`stored_len == raw_len`); a compressed one needs `kraken::decode_block`. Only a file's last
-/// block can extend past its end; the bytes beyond the file's size belong to no file.
+/// (`stored_len == raw_len`); a compressed one needs `kraken::decode_block`. A sparse block (a
+/// hole) is `raw_len` zeros with nothing stored: `stored_len` 0, `pkg_off` 0, not compressed
+/// (`Block::zero`). Only a file's last block can extend past its end; the bytes beyond the
+/// file's size belong to no file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Block {
     pub raw_len: u32,
@@ -289,11 +296,12 @@ impl Pkg {
     }
 
     /// The plaintext byte runs of `e` inside the `.pkg`, in file order (empty for a directory).
-    /// `Unsupported` when one of its blocks is compressed.
+    /// `Unsupported` when one of its blocks is compressed or sparse.
     pub fn extents(&self, e: &Entry) -> Result<&[Extent], Error> {
         match self.file(e) {
             None => Ok(&[]),
             Some(n) if n.ext_ok => Ok(&self.extents[n.ext_start as usize..n.ext_end as usize]),
+            Some(_) if self.has_sparse(e) => Err(pkg::unsupported(alloc::format!("{}: has sparse holes (zeros, nothing stored), no plaintext extents", e.path))),
             Some(_) => Err(pkg::unsupported(alloc::format!("{}: has Kraken-compressed blocks, no plaintext extents", e.path))),
         }
     }
@@ -307,6 +315,12 @@ impl Pkg {
             Some(n) if n.blk_err == NO_ERR => Ok(&self.blocks[n.blk_start as usize..n.blk_end as usize]),
             Some(n) => Err(Error::Unsupported(self.blk_errs[n.blk_err as usize].clone())),
         }
+    }
+
+    /// Whether `e`'s data overlaps a sparse hole (its blocks then include zero blocks).
+    pub fn has_sparse(&self, e: &Entry) -> bool {
+        self.file(e).is_some_and(|n| !n.ext_ok && n.size != 0
+            && self.image.kraken.range(n.logical, n.size).iter().any(|b| b.sparse()))
     }
 
     /// Up to `buf.len()` bytes of `e` at `off`; 0 at or past its end. A file with only raw

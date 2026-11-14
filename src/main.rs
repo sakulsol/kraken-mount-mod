@@ -7,6 +7,7 @@
 
 #[macro_use]
 mod sys;
+mod i18n;
 mod ampr_index;
 mod cache;
 mod config;
@@ -55,7 +56,7 @@ fn check_space(state: &State, s: &Settings) {
     let low = free < s.low_space_gb << 30;
     state.low_space.store(low, Ordering::SeqCst);
     if low && !WARNED.swap(true, Ordering::SeqCst) {
-        toast(s, &format!("Kraken Mount: /data has only {} GB free", free >> 30));
+        toast(s, &i18n::low_space(i18n::lang(), free >> 30));
     }
 }
 
@@ -86,7 +87,7 @@ fn build_and_register(state: &State, s: &Settings, src: &Source, fresh: &Fresh, 
         match fresh {
             Fresh::Stale(why) => log!("{tid}: cache stale ({why}); rebuilding"),
             Fresh::Missing => log!("{tid}: no cache; building"),
-            Fresh::Fresh | Fresh::Fakelib(_) => log!("{tid}: rebuild forced"),
+            Fresh::Fresh | Fresh::Fakelib(_) | Fresh::Moved(_) => log!("{tid}: rebuild forced"),
         }
         state.update(&src.path, |g| g.status = "building");
         check_space(state, s);
@@ -98,12 +99,32 @@ fn build_and_register(state: &State, s: &Settings, src: &Source, fresh: &Fresh, 
     Ok(true)
 }
 
+/// Fresh::Moved: a folder game's /system_ex/app/<TID> stack (nullfs + backport unionfs) is redone
+/// on the new folder first, so a failed relink is retried next scan; then the cache is relinked
+/// (a pkg's app0 is its cache dir: no remount; launch.rs mounts the pkg's folder from the stamp).
+/// Only reached from the scan loop, which never runs while a game does.
+fn relink_moved(s: &Settings, src: &Source, from: &std::path::Path) -> std::io::Result<()> {
+    if src.kind != Kind::Pkg {
+        register::remount(&src.title_id, &cache::app0(src), backport_of(src))?;
+    }
+    cache::relink(src, s, from)?;
+    toast(s, &i18n::moved(i18n::lang(), &src.title_name, &src.path.to_string_lossy()));
+    Ok(())
+}
+
 /// One game of the scan: check, build, register, status. A failed game is retried only when
 /// its inputs_key changes or a rebuild is forced.
 fn process(state: &State, s: &Settings, src: &Source, registered: &mut HashSet<String>, failed: &mut HashMap<PathBuf, String>) {
     let tid = &src.title_id;
     let forced = state.forced.lock().unwrap().remove(tid);
-    let fresh = cache::check(src, s);
+    let mut fresh = cache::check(src, s);
+    if let (false, Fresh::Moved(from)) = (forced, &fresh) {
+        fresh = match relink_moved(s, src, from) {
+            Ok(()) => cache::check(src, s),
+            // The rebuild path below logs and reports what still fails.
+            Err(e) => Fresh::Stale(format!("relink failed: {e}")),
+        };
+    }
     let r = if !forced && failed.get(&src.path) == Some(&inputs_key(src, s)) {
         state.update(&src.path, |g| g.status = "error");
         return;
@@ -131,7 +152,7 @@ fn process(state: &State, s: &Settings, src: &Source, registered: &mut HashSet<S
                 (g.status, g.error, g.cache_size, g.cache_built) = ("ready", None, size, built);
             });
             if new {
-                toast(s, &format!("{} registered", src.title_name));
+                toast(s, &i18n::registered(i18n::lang(), &src.title_name));
             }
         }
         Err(e) => {
@@ -141,7 +162,7 @@ fn process(state: &State, s: &Settings, src: &Source, registered: &mut HashSet<S
             state.update(&src.path, |g| {
                 (g.status, g.error, g.cache_size, g.cache_built) = ("error", Some(e.clone()), size, built);
             });
-            toast(s, &format!("{}: failed, see the log", src.title_name));
+            toast(s, &i18n::failed(i18n::lang(), &src.title_name));
         }
     }
 }
@@ -295,22 +316,58 @@ fn prepare_ampr() {
     }
 }
 
+/// ShadowMountPlus's process name (SMP main.c PAYLOAD_NAME): it registers and mounts the same titles.
+const SMP_PROCESS: &str = "shadowmountplus.elf";
+
+/// SMP wait_for_kstuff_ready, plus ShadowMount+ not running: polls every 2 s, one toast per
+/// reason when it starts waiting for it.
+fn wait_ready(state: &State) {
+    let s = state.settings.lock().unwrap().clone();
+    let mut waiting: Option<&str> = None;
+    loop {
+        let why = if !sys::kstuff_loaded() {
+            Some("kstuff")
+        } else if launch::find_pid(SMP_PROCESS).is_some() {
+            Some("shadowmount")
+        } else {
+            None
+        };
+        *state.waiting.lock().unwrap() = why;
+        match why {
+            None => {
+                if let Some(w) = waiting {
+                    log!("{w}: ready; continuing start-up");
+                }
+                return;
+            }
+            Some(w) if waiting != Some(w) => {
+                log!("waiting before start-up: {w}");
+                let l = i18n::lang();
+                toast(&s, if w == "kstuff" { i18n::kstuff_waiting(l) } else { i18n::smp_running(l) });
+                waiting = Some(w);
+            }
+            Some(_) => {}
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+}
+
 fn main() {
     // panic=abort: record the panic in kraken.log before the payload dies.
     std::panic::set_hook(Box::new(|info| sys::log_line(&format!("PANIC: {info}"))));
     for dir in [DATA_DIR, cache::CACHES, cache::AMPR_DIR] {
         if let Err(e) = std::fs::create_dir_all(dir) {
-            sys::notify(&format!("Kraken Mount: cannot create {dir}: {e}"));
+            sys::notify(&i18n::cannot_create(i18n::lang(), dir, &e.to_string()));
             return;
         }
     }
     let s = config::load();
     sys::LOG_FILE.store(s.log, Ordering::Relaxed);
     let Some(listener) = web::take_port() else {
-        toast(&s, &format!("Kraken Mount: port {} busy (an older copy that has a game running, or another app?); not started", web::PORT));
+        toast(&s, &i18n::port_busy(i18n::lang(), web::PORT));
         return;
     };
-    toast(&s, "Kraken Mount started");
+    toast(&s, i18n::started(i18n::lang()));
     install_bundled_ampr();
     prepare_ampr();
     std::thread::spawn(save_self_copy);
@@ -321,6 +378,8 @@ fn main() {
     let state = Arc::new(State::new(s));
     let web_state = state.clone();
     std::thread::spawn(move || web::serve(web_state, listener));
+    // The web UI is up; nothing mounts until kstuff answers and ShadowMount+ is gone.
+    wait_ready(&state);
     let (titles, running) = (state.titles.clone(), state.running.clone());
     // Built caches are launchable before the first scan ends: watch them from the start.
     for e in std::fs::read_dir(cache::CACHES).into_iter().flatten().flatten() {

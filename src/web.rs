@@ -38,6 +38,8 @@ pub struct State {
     /// Purge requested: done by the scan loop, so it never races a build.
     pub purge: AtomicBool,
     pub busy: AtomicBool,
+    /// Start-up is waiting for this ("kstuff" or "shadowmount", main::wait_ready); None once ready.
+    pub waiting: Mutex<Option<&'static str>>,
     /// Held by the scan loop for a whole pass (scan, purge, build, register); delete takes it.
     pub work: Mutex<()>,
     pub low_space: AtomicBool,
@@ -58,6 +60,7 @@ impl State {
             forced: Mutex::new(HashSet::new()),
             purge: AtomicBool::new(false),
             busy: AtomicBool::new(false),
+            waiting: Mutex::new(None),
             work: Mutex::new(()),
             low_space: AtomicBool::new(false),
             cache_total: Mutex::new(0),
@@ -295,7 +298,7 @@ fn route(state: &State, head: &str, body: &[u8], loopback: bool) -> Reply {
             log!("{}", if user { "shut down from the web UI" } else { "quit requested by a newer copy" });
             std::thread::spawn(move || {
                 if toast {
-                    sys::notify("Kraken Mount stopped");
+                    sys::notify(crate::i18n::stopped(crate::i18n::lang()));
                 }
                 std::thread::sleep(Duration::from_millis(200));
                 std::process::exit(0)
@@ -402,6 +405,7 @@ fn api_state(state: &State) -> Vec<u8> {
         "version": env!("CARGO_PKG_VERSION"),
         "busy": state.busy.load(Ordering::SeqCst),
         "paused": !running.is_empty(),
+        "waiting": *state.waiting.lock().unwrap(),
         "running": running,
         "games": games,
         "drives": drives,
@@ -590,7 +594,7 @@ fn delete(state: &State, tid: &str, body: &[u8]) -> Reply {
     }
     log!("{tid}: deleted {}", src.path.display());
     if state.settings.lock().unwrap().notify {
-        sys::notify(&format!("{} deleted", src.title_name));
+        sys::notify(&crate::i18n::deleted(crate::i18n::lang(), &src.title_name));
     }
     no_content()
 }

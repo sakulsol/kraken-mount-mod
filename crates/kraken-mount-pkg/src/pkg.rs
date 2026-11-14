@@ -264,11 +264,12 @@ impl Image {
 
     /// Append the `.pkg` byte runs behind mount bytes `off..off + len` to `out`, in order,
     /// merging a run into the previous one (also one already in `out`) when they touch.
-    /// `Unsupported` when a block in the range is compressed (its bytes are not plaintext).
+    /// `Unsupported` when a block in the range is compressed or sparse (no plaintext bytes).
     pub fn extents(&self, off: u64, len: u64, out: &mut Vec<Extent>) -> Result<(), Error> {
         self.check_range(off, len)?;
         if let Some(b) = self.kraken.range(off, len).iter().find(|b| !b.raw()) {
-            return Err(unsupported(format!("the block at mount {:#x} is Kraken-compressed", b.logical)));
+            let what = if b.sparse() { "a sparse hole (zeros, nothing stored)" } else { "Kraken-compressed" };
+            return Err(unsupported(format!("the block at mount {:#x} is {what}", b.logical)));
         }
         for (at, n) in self.kraken.stored(off, len) {
             self.image.pkg_extents(at, n, out)?;
@@ -316,7 +317,10 @@ impl Image {
             let inner = (off + done as u64 - b.logical) as usize;
             let n = (b.len as usize - inner).min(buf.len() - done);
             let out = &mut buf[done..done + n];
-            if b.raw() {
+            if b.sparse() {
+                // A hole has no stored bytes: it reads as zeros (metadata, extracted files).
+                out.fill(0);
+            } else if b.raw() {
                 runs.clear();
                 self.image.pkg_extents(b.stored_at + inner as u64, n as u64, &mut runs)?;
                 let mut at = 0usize;

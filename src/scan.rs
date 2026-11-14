@@ -141,7 +141,8 @@ static LOGGED: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
 
 pub fn scan(roots: &[String], backports: bool) -> ScanResult {
     let mut result = ScanResult { games: Vec::new(), duplicates: Vec::new(), errors: Vec::new() };
-    let mut seen = HashSet::new();
+    // Title id -> its index in `result.games`.
+    let mut seen: HashMap<String, usize> = HashMap::new();
     let cached = cached_pkgs();
     for root in roots {
         let root = Path::new(root);
@@ -215,10 +216,17 @@ pub fn scan(roots: &[String], backports: bool) -> ScanResult {
                 backport: if backports { backport_for(root, roots, &title_id) } else { None },
                 path, kind, title_id, title_name, version, size,
             };
-            if seen.insert(source.title_id.clone()) {
-                result.games.push(source);
-            } else {
-                result.duplicates.push(source);
+            // A folder beats a pkg; within a kind the first scan root wins.
+            match seen.get(&source.title_id) {
+                None => {
+                    seen.insert(source.title_id.clone(), result.games.len());
+                    result.games.push(source);
+                }
+                Some(&i) if result.games[i].kind == Kind::Pkg && source.kind != Kind::Pkg => {
+                    let pkg = std::mem::replace(&mut result.games[i], source);
+                    result.duplicates.push(pkg);
+                }
+                Some(_) => result.duplicates.push(source),
             }
         }
     }

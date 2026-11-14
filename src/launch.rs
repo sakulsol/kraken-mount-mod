@@ -115,7 +115,7 @@ fn same_fsid(a: &libc::fsid_t, b: &libc::fsid_t) -> bool {
 }
 
 /// SMP find_pid_by_name.
-fn find_pid(name: &str) -> Option<libc::pid_t> {
+pub fn find_pid(name: &str) -> Option<libc::pid_t> {
     proc_find(|_, td| td == name.as_bytes())
 }
 
