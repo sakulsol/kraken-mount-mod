@@ -158,6 +158,23 @@ pub fn registered(l: Lang, name: &str) -> String {
     }
 }
 
+/// A newer ampr-emu-ng release (`version`, its tag) was downloaded and installed.
+pub fn ampr_updated(l: Lang, version: &str) -> String {
+    match l {
+        Lang::En => format!("ampr-emu-ng {version} installed"),
+        Lang::Ru => format!("ampr-emu-ng {version} установлен"),
+        Lang::Zh => format!("ampr-emu-ng {version} 已安装"),
+        Lang::De => format!("ampr-emu-ng {version} installiert"),
+        Lang::Es => format!("ampr-emu-ng {version} instalado"),
+        Lang::Fr => format!("ampr-emu-ng {version} installé"),
+        Lang::Ja => format!("ampr-emu-ng {version} をインストールしました"),
+        Lang::Pt => format!("ampr-emu-ng {version} instalado"),
+        Lang::It => format!("ampr-emu-ng {version} installato"),
+        Lang::Ko => format!("ampr-emu-ng {version} 설치됨"),
+        Lang::Ar => format!("تم تثبيت ampr-emu-ng {version}"),
+    }
+}
+
 /// A game moved to another drive or folder (`path`, the new source) was relinked, no rebuild.
 pub fn moved(l: Lang, name: &str, path: &str) -> String {
     match l {

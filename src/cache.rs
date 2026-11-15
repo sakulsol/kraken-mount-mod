@@ -561,10 +561,13 @@ fn compose_fakelib(src: &Source, s: &Settings, pkg: Option<(&Io, &Pkg)>) -> Resu
         copy_flat(&lib, &fakelib, keep_fakelib)?;
     }
     // Our ampr-emu-ng on top of whatever the game or backport ships (its own libSceAmpr.sprx included).
+    // State read before the copy: a file replaced mid-copy (ampr auto-update) then differs at the
+    // next check and refreshes fakelib again, instead of being recorded as already copied.
+    let state = ampr_state(s);
     if s.inject_ampr {
         copy_flat(Path::new(AMPR_DIR), &fakelib, ampr_copied)?;
     }
-    fs::write(dir.join(AMPR_STATE), ampr_state(s).to_string())
+    fs::write(dir.join(AMPR_STATE), state.to_string())
 }
 
 /// Recomposes only fakelib/ (Fresh::Fakelib): no extraction besides a pkg's own fakelib, no

@@ -30,6 +30,7 @@ sandbox. Web UI on port 8097 (opened from the "Kraken Mount" home-screen tile).
 | `src/launch.rs` | launch watcher: the fakelib overlay, writable `/app0`, `/app0/kraken` |
 | `src/web.rs`, `src/ui.html` | HTTP server and the single-file UI |
 | `src/sys.rs` | log, toasts, mount syscalls, kstuff probe |
+| `src/net.rs` | HTTPS GET over the console's sceHttp/sceSsl (ampr-emu-ng auto-update) |
 | `src/i18n.rs` | toast texts in the console language (the UI's 11 languages) |
 | `crates/kraken-mount-pkg` | FPKG reader and its Kraken decoder (`decoder` module) |
 | `ps5/` | Docker build, linker, C shims (`compat.c` holds PS5 libc adapters) |

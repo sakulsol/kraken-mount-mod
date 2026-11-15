@@ -12,6 +12,7 @@ mod ampr_index;
 mod cache;
 mod config;
 mod launch;
+mod net;
 mod register;
 mod scan;
 mod storage;
@@ -250,52 +251,265 @@ fn save_self_copy() {
 /// The ampr-emu-ng release bundled in the ELF (vendor/ampr-emu-ng; ps5/build.sh checks its SHA-256).
 const BUNDLED_AMPR: &[u8] = include_bytes!("../vendor/ampr-emu-ng/libSceAmpr.sprx");
 const BUNDLED_AMPR_VERSION: &str = include_str!("../vendor/ampr-emu-ng/VERSION");
-/// "<len> <crc32>" of the bundled copy last written. Outside AMPR_DIR: every file there goes into fakelib/.
+/// `<version> <len> <crc32>` of the copy we last wrote (bundled or downloaded); v0.4.0 wrote
+/// `<len> <crc32>` (version unknown). Outside AMPR_DIR: every file there goes into fakelib/.
 const BUNDLED_MARK: &str = "/data/krakenmount/ampr.bundled";
+const AMPR_RELEASE_URL: &str = "https://api.github.com/repos/quer3q/ampr-emu-ng/releases/latest";
+const AMPR_ASSET: &str = "libSceAmpr.sprx";
 
-/// Puts the bundled libSceAmpr.sprx into AMPR_DIR when it is missing or is a bundled copy we wrote
-/// before (an older release). A file put there by hand (a debug build, say) is kept.
-fn install_bundled_ampr() {
-    let path = format!("{}/libSceAmpr.sprx", cache::AMPR_DIR);
-    let mark = |b: &[u8]| format!("{} {:08x}", b.len(), ampr_index::crc32(&[b]));
-    let write_mark = || {
-        if let Err(e) = std::fs::write(BUNDLED_MARK, mark(BUNDLED_AMPR)) {
-            log!("ampr: write {BUNDLED_MARK}: {e}");
-        }
+fn mark_format(version: &str, len: usize, crc: u32) -> String {
+    format!("{} {len} {crc:08x}", version.trim())
+}
+
+/// The mark's version when it records exactly (len, crc): Some(None) for the old format.
+fn mark_version(mark: &str, len: usize, crc: u32) -> Option<Option<&str>> {
+    let f: Vec<&str> = mark.split_whitespace().collect();
+    let (v, l, c) = match f[..] {
+        [l, c] => (None, l, c),
+        [v, l, c] => (Some(v), l, c),
+        _ => return None,
     };
-    match std::fs::read(&path) {
-        Ok(cur) if cur == BUNDLED_AMPR => {
-            if std::fs::read_to_string(BUNDLED_MARK).ok() != Some(mark(BUNDLED_AMPR)) {
-                write_mark();
+    (l.parse::<usize>().ok()? == len && u32::from_str_radix(c, 16).ok()? == crc).then_some(v)
+}
+
+/// `vX.Y.Z` (leading v optional); None = unknown.
+fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
+    let v = v.trim();
+    let mut it = v.strip_prefix('v').unwrap_or(v).split('.').map(|p| p.parse::<u32>().ok());
+    let r = (it.next()??, it.next()??, it.next()??);
+    it.next().is_none().then_some(r)
+}
+
+/// `a` newer than `b`; an unknown version is older than any.
+fn newer(a: Option<&str>, b: Option<&str>) -> bool {
+    a.and_then(parse_version) > b.and_then(parse_version)
+}
+
+#[derive(Debug, PartialEq)]
+enum Installed<'a> {
+    Missing,
+    /// Put there by hand: never replaced.
+    Hand,
+    /// A copy we wrote, with its version (None = unknown).
+    Ours(Option<&'a str>),
+}
+
+/// `cur`: (len, crc32, equals the bundled copy) of AMPR_DIR/libSceAmpr.sprx, None when missing.
+fn installed<'a>(cur: Option<(usize, u32, bool)>, bundled_version: &'a str, mark: Option<&'a str>) -> Installed<'a> {
+    match cur {
+        None => Installed::Missing,
+        Some((_, _, true)) => Installed::Ours(Some(bundled_version)),
+        Some((len, crc, false)) => match mark.and_then(|m| mark_version(m, len, crc)) {
+            Some(v) => Installed::Ours(v),
+            None => Installed::Hand,
+        },
+    }
+}
+
+/// The updater downloads `tag` when the file is missing or ours and older.
+fn should_update(inst: &Installed, tag: &str) -> bool {
+    match inst {
+        Installed::Missing => true,
+        Installed::Hand => false,
+        Installed::Ours(v) => newer(Some(tag), *v),
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct Release {
+    tag: String,
+    url: String,
+    size: usize,
+}
+
+/// tag_name and the libSceAmpr.sprx asset of a GitHub releases/latest answer.
+fn parse_release(body: &[u8]) -> Result<Release, String> {
+    let j: serde_json::Value = serde_json::from_slice(body).map_err(|e| format!("bad JSON: {e}"))?;
+    let tag = j["tag_name"].as_str().ok_or("no tag_name")?.to_string();
+    let assets = j["assets"].as_array().ok_or("no assets")?;
+    let a = assets.iter().find(|a| a["name"].as_str() == Some(AMPR_ASSET)).ok_or(format!("{tag}: no {AMPR_ASSET} asset"))?;
+    let url = a["browser_download_url"].as_str().ok_or("no browser_download_url")?.to_string();
+    let size = a["size"].as_u64().and_then(|n| usize::try_from(n).ok()).ok_or("no asset size")?;
+    Ok(Release { tag, url, size })
+}
+
+/// ELF or SELF (the signed form the PS5 loader also takes).
+fn is_module(b: &[u8]) -> bool {
+    b.starts_with(&[0x7f, 0x45, 0x4c, 0x46]) || b.starts_with(&[0x4f, 0x15, 0x3d, 0x1d])
+}
+
+/// Writes `b` to AMPR_DIR/libSceAmpr.sprx (0777) and records it in BUNDLED_MARK as `version`.
+/// Temp file beside AMPR_DIR, not in it, so a scan never copies a half-written one.
+fn write_ampr(path: &str, b: &[u8], version: &str) -> std::io::Result<()> {
+    let tmp = format!("{DATA_DIR}/libSceAmpr.sprx.tmp");
+    let r = std::fs::File::create(&tmp)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, b).and_then(|()| f.sync_all()))
+        .and_then(|()| std::fs::set_permissions(&tmp, std::os::unix::fs::PermissionsExt::from_mode(0o777)))
+        .and_then(|()| std::fs::rename(&tmp, path));
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r?;
+    // ponytail: no mark = the file reads as hand-placed and is never replaced again (by the bundled
+    // copy or the updater) until deleted; an error here is reported, not undone.
+    write_mark(version, b)
+}
+
+fn write_mark(version: &str, b: &[u8]) -> std::io::Result<()> {
+    std::fs::write(BUNDLED_MARK, mark_format(version, b.len(), ampr_index::crc32(&[b])))
+        .map_err(|e| std::io::Error::new(e.kind(), format!("write {BUNDLED_MARK}: {e}")))
+}
+
+/// What AMPR_DIR/libSceAmpr.sprx (`path`) is now given BUNDLED_MARK's text, and whether it equals
+/// the bundled copy. Err: a read error other than NotFound.
+fn read_installed<'a>(path: &str, mark: Option<&'a str>) -> std::io::Result<(Installed<'a>, bool)> {
+    let cur = match std::fs::read(path) {
+        Ok(cur) => Some((cur.len(), ampr_index::crc32(&[&cur]), cur == BUNDLED_AMPR)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    let bundled = cur.is_some_and(|c| c.2);
+    Ok((installed(cur, BUNDLED_AMPR_VERSION.trim(), mark), bundled))
+}
+
+/// Puts the bundled libSceAmpr.sprx into AMPR_DIR when it is missing or is a copy we wrote
+/// (bundled or downloaded) that is not newer. A file put there by hand (a debug build, say) is kept.
+fn install_bundled_ampr() {
+    let path = format!("{}/{AMPR_ASSET}", cache::AMPR_DIR);
+    let bv = BUNDLED_AMPR_VERSION.trim();
+    let mark = std::fs::read_to_string(BUNDLED_MARK).ok();
+    match read_installed(&path, mark.as_deref()) {
+        Ok((_, true)) => {
+            let want = mark_format(bv, BUNDLED_AMPR.len(), ampr_index::crc32(&[BUNDLED_AMPR]));
+            if mark.as_deref() != Some(want.as_str()) {
+                if let Err(e) = write_mark(bv, BUNDLED_AMPR) {
+                    log!("ampr: {e}");
+                }
             }
             return;
         }
-        Ok(cur) if std::fs::read_to_string(BUNDLED_MARK).is_ok_and(|m| m == mark(&cur)) => {}
-        Ok(_) => {
-            log!("ampr: {path} is not a bundled ampr-emu-ng: kept (delete it to get {BUNDLED_AMPR_VERSION})");
+        Ok((Installed::Ours(v), _)) if newer(v, Some(bv)) => {
+            log!("ampr: {path} is ampr-emu-ng {} (newer than the bundled {bv}): kept", v.unwrap_or("?"));
             return;
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Ok((Installed::Ours(_) | Installed::Missing, _)) => {}
+        Ok((Installed::Hand, _)) => {
+            log!("ampr: {path} is not a bundled ampr-emu-ng: kept (delete it to get {bv})");
+            return;
+        }
         Err(e) => {
             log!("ampr: read {path}: {e}");
             return;
         }
     }
-    // Temp file beside AMPR_DIR, not in it, so a scan never copies a half-written one.
-    let tmp = format!("{DATA_DIR}/libSceAmpr.sprx.tmp");
-    let r = std::fs::File::create(&tmp)
-        .and_then(|mut f| std::io::Write::write_all(&mut f, BUNDLED_AMPR).and_then(|()| f.sync_all()))
-        .and_then(|()| std::fs::rename(&tmp, &path));
-    match r {
-        Ok(()) => {
-            write_mark();
-            log!("ampr: installed bundled ampr-emu-ng {BUNDLED_AMPR_VERSION} ({} bytes) to {path}", BUNDLED_AMPR.len());
+    match write_ampr(&path, BUNDLED_AMPR, bv) {
+        Ok(()) => log!("ampr: installed bundled ampr-emu-ng {bv} ({} bytes) to {path}", BUNDLED_AMPR.len()),
+        Err(e) => log!("ampr: install bundled ampr-emu-ng to {path}: {e}"),
+    }
+}
+
+/// net::https_get with up to `attempts` tries 20 s apart; each failure logged.
+fn get_retry(url: &str, max: usize, attempts: u32) -> Result<Vec<u8>, String> {
+    let mut last = String::new();
+    for n in 1..=attempts {
+        match net::https_get(url, max) {
+            Ok(b) => return Ok(b),
+            Err(e) => {
+                log!("ampr: update: GET {url} (attempt {n}/{attempts}): {e}");
+                last = e.to_string();
+            }
         }
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
-            log!("ampr: install bundled ampr-emu-ng to {path}: {e}");
+        if n < attempts {
+            std::thread::sleep(Duration::from_secs(20));
         }
     }
+    Err(last)
+}
+
+/// A hand-placed libSceAmpr.sprx moved aside by a forced update (outside AMPR_DIR: never copied).
+/// ponytail: one backup; a second forced update over another hand-placed file replaces it.
+const HAND_BACKUP: &str = "/data/krakenmount/libSceAmpr.sprx.hand";
+const AMPR_MAX: usize = 16 << 20;
+/// One update at a time: the start-up check and the web UI's "Update now" share it.
+static AMPR_UPDATING: AtomicBool = AtomicBool::new(false);
+
+fn hand_placed(path: &str) -> Result<bool, String> {
+    let mark = std::fs::read_to_string(BUNDLED_MARK).ok();
+    let (inst, _) = read_installed(path, mark.as_deref()).map_err(|e| format!("read {path}: {e}"))?;
+    Ok(inst == Installed::Hand)
+}
+
+/// Installs the latest stable ampr-emu-ng release from GitHub. Without `force` (start-up check):
+/// only when the installed file is ours (or missing) and older; a hand-placed file is kept. With
+/// `force` (web UI): whatever is installed, a hand-placed file moved to HAND_BACKUP first. Returns a
+/// one-line result for the UI (also logged); an install wakes the scan loop to refresh fakelibs.
+fn ampr_update(state: &State, force: bool, attempts: u32) -> Result<String, String> {
+    if AMPR_UPDATING.swap(true, Ordering::SeqCst) {
+        return Err("an update is already running".into());
+    }
+    let r = ampr_update_inner(state, force, attempts);
+    AMPR_UPDATING.store(false, Ordering::SeqCst);
+    match &r {
+        Ok(m) => log!("ampr: update: {m}"),
+        Err(e) => log!("ampr: update: {e}"),
+    }
+    r
+}
+
+fn ampr_update_inner(state: &State, force: bool, attempts: u32) -> Result<String, String> {
+    let path = format!("{}/{AMPR_ASSET}", cache::AMPR_DIR);
+    let body = get_retry(AMPR_RELEASE_URL, 1 << 20, attempts).map_err(|e| format!("GET {AMPR_RELEASE_URL}: {e}"))?;
+    let rel = parse_release(&body).map_err(|e| format!("{AMPR_RELEASE_URL}: {e}"))?;
+    let mark = std::fs::read_to_string(BUNDLED_MARK).ok();
+    let (inst, _) = read_installed(&path, mark.as_deref()).map_err(|e| format!("read {path}: {e}"))?;
+    if !force && !should_update(&inst, &rel.tag) {
+        let why = match inst {
+            Installed::Hand => "hand-placed, kept".to_string(),
+            Installed::Ours(v) => format!("installed {} is not older", v.unwrap_or("?")),
+            Installed::Missing => String::new(),
+        };
+        return Ok(format!("latest {} skipped ({path}: {why})", rel.tag));
+    }
+    if rel.size > AMPR_MAX {
+        return Err(format!("{} asset is {} bytes, over {AMPR_MAX}", rel.tag, rel.size));
+    }
+    let b = get_retry(&rel.url, AMPR_MAX, attempts).map_err(|e| format!("GET {}: {e}", rel.url))?;
+    if b.len() != rel.size || !is_module(&b) {
+        let magic = &b[..b.len().min(4)];
+        return Err(format!(
+            "{} from {}: {} bytes (asset size {}), magic {magic:02x?}: not installed",
+            rel.tag, rel.url, b.len(), rel.size
+        ));
+    }
+    // Checked again: a file put there by hand during the download is kept (forced: moved aside).
+    if hand_placed(&path)? {
+        if !force {
+            return Ok(format!("latest {} skipped ({path}: hand-placed meanwhile, kept)", rel.tag));
+        }
+        std::fs::rename(&path, HAND_BACKUP).map_err(|e| format!("move {path} -> {HAND_BACKUP}: {e}"))?;
+        log!("ampr: update: hand-placed {path} moved to {HAND_BACKUP}");
+    }
+    write_ampr(&path, &b, &rel.tag).map_err(|e| format!("install {} to {path}: {e}", rel.tag))?;
+    let s = state.settings.lock().unwrap().clone();
+    toast(&s, &i18n::ampr_updated(i18n::lang(), &rel.tag));
+    state.wake();
+    Ok(format!("installed ampr-emu-ng {} ({} bytes)", rel.tag, b.len()))
+}
+
+/// GET /api/ampr: what AMPR_DIR/libSceAmpr.sprx is now, and whether an update runs.
+fn ampr_status() -> serde_json::Value {
+    let path = format!("{}/{AMPR_ASSET}", cache::AMPR_DIR);
+    let mark = std::fs::read_to_string(BUNDLED_MARK).ok();
+    let (kind, version) = match read_installed(&path, mark.as_deref()) {
+        Ok((_, true)) => ("bundled", Some(BUNDLED_AMPR_VERSION.trim())),
+        Ok((Installed::Ours(Some(v)), _)) => ("downloaded", Some(v)),
+        // v0.4.0 builds' mark: an older bundled copy.
+        Ok((Installed::Ours(None), _)) => ("bundled", None),
+        Ok((Installed::Hand, _)) => ("hand", None),
+        Ok((Installed::Missing, _)) => ("missing", None),
+        Err(_) => ("error", None),
+    };
+    serde_json::json!({"kind": kind, "version": version, "updating": AMPR_UPDATING.load(Ordering::SeqCst)})
 }
 
 /// ampr files are loaded by every game's sandbox: 0777 like the caches. A libkernel.sprx there
@@ -376,6 +590,11 @@ fn main() {
         std::thread::spawn(klog_capture);
     }
     let state = Arc::new(State::new(s));
+    let st = state.settings.lock().unwrap().clone();
+    if st.ampr_auto_update && st.inject_ampr {
+        let state = state.clone();
+        std::thread::spawn(move || ampr_update(&state, false, 3));
+    }
     let web_state = state.clone();
     std::thread::spawn(move || web::serve(web_state, listener));
     // The web UI is up; nothing mounts until kstuff answers and ShadowMount+ is gone.

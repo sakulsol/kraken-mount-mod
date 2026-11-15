@@ -20,7 +20,7 @@ and installed into `/data/krakenmount/ampr/` at start.
 |---|---|
 | `/data/krakenmount/config.toml` | settings (created with defaults on first start) |
 | `/data/krakenmount/caches/<TID>/` | per-game cache |
-| `/data/krakenmount/ampr.bundled` | `<len> <crc32>` of the bundled `libSceAmpr.sprx` last installed (outside `ampr/`, whose files all go into fakelib) |
+| `/data/krakenmount/ampr.bundled` | `<version> <len> <crc32>` of the `libSceAmpr.sprx` we last wrote, bundled or downloaded (v0.4.0 builds wrote `<len> <crc32>`: ours, version unknown; outside `ampr/`, whose files all go into fakelib) |
 | `/data/krakenmount/ampr/` | ampr-emu-ng files (`libSceAmpr.sprx`, ...), copied on top of every game's `fakelib/` in its cache (chmod 0777 at start; a `libkernel.sprx` there is never copied and logs a warning) |
 | `/data/krakenmount/kraken.log` | log (setting `log`); starts over past 1 MiB, no kept copy |
 | `/data/krakenmount/kraken-mount.elf` | self copy the tile starts (Dump Forge style, below) |
@@ -39,6 +39,7 @@ A flat TOML subset: `key = value` with strings, `true`/`false`, integers and arr
 |---|---|---|
 | `scanpath` | (defaults above) | array of paths; replaces the default scan roots |
 | `inject_ampr` | true | copy `/data/krakenmount/ampr/*` on top of every game's fakelib (a change only refreshes `fakelib/`) |
+| `ampr_auto_update` | true | once per start, download a newer ampr-emu-ng release from GitHub (a hand-placed `libSceAmpr.sprx` is kept) |
 | `backports` | true | apply `<scan root>/backports/<TID>*` |
 | `scan_interval_seconds` | 10 | scan loop period (1..3600) |
 | `low_space_gb` | 20 | warn when `/data` free space is below this |
@@ -100,7 +101,7 @@ Invalid values are logged and replaced by the default. The web UI edits the same
 ## Flow (`src/main.rs`)
 Start: create dirs, load config, take port 8097 (asks an older copy to quit), install the bundled
 `libSceAmpr.sprx` when `ampr/libSceAmpr.sprx` is missing or matches `ampr.bundled` (an older bundled
-copy; a file put there by hand is kept), ampr chmod, web thread, klog thread when `debug`, then wait
+copy; a file put there by hand is kept; see Auto-update below), ampr chmod, web thread, klog thread when `debug`, then wait
 (2 s poll, one toast per reason, `waiting` in `/api/state` for the UI banner) until kstuff answers its KEKCALL_CHECK probe (`sys::kstuff_loaded`,
 SMP `sm_kstuff_is_loaded`) and no `shadowmountplus.elf` process runs, then the launch watcher thread. Loop every `scan_interval_seconds` or on
 wake: reload config, scan, then for each game: freshness check, build if stale or forced,
@@ -114,6 +115,20 @@ A moved game (`Fresh::Moved`, not forced): a folder's `/system_ex/app/<TID>` sta
 new folder first (`register::remount`, backport unionfs included, never MNT_FORCE), then
 `cache::relink`; logged with the title id and both paths, toast `i18n::moved`; then the usual
 fresh path. A failed relink or remount falls back to a rebuild.
+Auto-update (ampr-emu-ng): at start, when `ampr_auto_update` and `inject_ampr` are on, a background thread asks
+`https://api.github.com/repos/quer3q/ampr-emu-ng/releases/latest` (stable releases only; betas are
+pre-releases and skipped). When its `tag_name` is newer than the installed version, it downloads the
+asset `libSceAmpr.sprx` (size must equal the asset size, max 16 MiB, ELF or SELF magic), writes a temp
+file in `/data/krakenmount`, chmod 0777, renames it to `/data/krakenmount/ampr/libSceAmpr.sprx`, records
+it in `ampr.bundled` as `<tag> <len> <crc32>` and toasts `i18n::ampr_updated`. A copy we wrote (bundled
+or downloaded) is ours: the bundled copy replaces ours only when the bundled version is newer; a
+hand-placed file is kept by both, and ownership is checked again after the download. Network errors are
+logged and retried up to 3 times 20 s apart, then nothing until the next start. An install wakes the scan
+loop (fakelib refresh); one update runs at a time. Settings has "Update ampr-emu-ng now"
+(`POST /api/ampr/update`): forced, one attempt, installs the latest stable release whatever is
+installed; a hand-placed file is first moved to `/data/krakenmount/libSceAmpr.sprx.hand` (one backup,
+outside `ampr/`). HTTPS goes through the console's sceHttp/sceSsl with 4 built-in root CAs
+(from SMP).
 Running game: while `launch::watch` reports a live session (`running`), the loop does no
 scan/build/register/purge (a game starting mid-scan stops the scan before the next title);
 rescan/rebuild/purge requests stay queued and run after the game exits (2 s poll).
@@ -151,7 +166,7 @@ No overlay when neither layer applies.
 // config.rs
 pub const CONFIG_PATH: &str = "/data/krakenmount/config.toml";
 #[derive(Clone, PartialEq, Debug)]
-pub struct Settings { pub scan_paths: Vec<String>, pub inject_ampr: bool,
+pub struct Settings { pub scan_paths: Vec<String>, pub inject_ampr: bool, pub ampr_auto_update: bool,
   pub backports: bool, pub scan_interval_secs: u64, pub low_space_gb: u64, pub notify: bool, pub log: bool, pub debug: bool }
 impl Default for Settings
 pub fn load() -> Settings;                       // creates the file with defaults when missing
@@ -210,6 +225,9 @@ pub fn uninstall(tid: &str) -> std::io::Result<()>;       // sceAppInstUtilAppUn
 
 // launch.rs (titles: overlay these; running: title ids with a live session, kept by the watcher)
 pub fn watch(titles: Arc<Mutex<HashSet<String>>>, running: Arc<Mutex<HashSet<String>>>);
+
+// net.rs (blocking GET over sceHttp/sceSsl, 4 pinned root CAs; Err on non-200, sce error or > max bytes)
+pub fn https_get(url: &str, max: usize) -> std::io::Result<Vec<u8>>;
 ```
 
 ## Web API (`src/web.rs`, port 8097, served to `src/ui.html`)
@@ -221,6 +239,9 @@ pub fn watch(titles: Arc<Mutex<HashSet<String>>>, running: Arc<Mutex<HashSet<Str
   drive, size, status:"pending"|"checking"|"building"|"ready"|"error"|"duplicate", error, cache_size, cache_built, backport}],
   drives:[{mount, label, kind, total, free}], cache:{path, size, free, low_space, ampr_present}, log:[last 100 lines of the last 64 KiB]}`
 - `GET /api/settings` -> settings JSON; `POST /api/settings` (JSON body) -> save, apply, rescan.
+- `GET /api/ampr` -> `{kind: "bundled"|"downloaded"|"hand"|"missing"|"error", version, updating}` of
+  `ampr/libSceAmpr.sprx`; `POST /api/ampr/update` -> forced update, answered when done: 200 + result text,
+  409 while one runs, 502 + error text.
 - `POST /api/rescan`, `POST /api/rebuild/<TID>`, `POST /api/rebuild-all`, `POST /api/purge` -> 204.
 - `GET /api/sizes/<TID>` -> `{game: u64, dlc: u64, save: u64|null, cache: u64}` in bytes,
   measured on request; 404 for an invalid or absent library title. Game is the pkg file or folder,

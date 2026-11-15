@@ -284,6 +284,13 @@ fn route(state: &State, head: &str, body: &[u8], loopback: bool) -> Reply {
             reply(200, "application/json", v.to_string())
         }
         ("POST", "/api/settings") => post_settings(state, body),
+        ("GET", "/api/ampr") => reply(200, "application/json", crate::ampr_status().to_string()),
+        // The UI's "Update now": forced, one attempt, answered when done (one thread per request).
+        ("POST", "/api/ampr/update") => match crate::ampr_update(state, true, 1) {
+            Ok(m) => reply(200, "text/plain", m),
+            Err(e) if e.contains("already running") => reply(409, "text/plain", e),
+            Err(e) => reply(502, "text/plain", e),
+        },
         // A newer copy taking over the port (loopback, empty body) or the UI's Shut down (body
         // "shutdown", from any host, as Dump Forge's Stop).
         ("POST", "/api/quit") if (loopback || body == b"shutdown") && state.paused() => {

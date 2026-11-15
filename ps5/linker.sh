@@ -17,4 +17,4 @@ mapfile -t wraps < /work/ps5/shim/syscalls.link
 exec "$PS5_PAYLOAD_SDK/bin/prospero-clang" "${args[@]}" \
   "$obj/freebsd11.o" "$obj/syscalls.o" "$obj/entry.o" "$obj/compat.o" "${wraps[@]}" \
   -Wl,--wrap=main -Wl,--wrap=fcntl -Wl,--wrap=cpuset_getaffinity -Wl,--error-limit=0 \
-  -ldl -lunwind -lc -lkernel_web -lSceLibcInternal -lSceNet -lSceSystemService -lSceUserService -lSceNotification -lSceAppInstUtil
+  -ldl -lunwind -lc -lkernel_web -lSceLibcInternal -lSceNet -lSceSsl -lSceHttp -lSceSystemService -lSceUserService -lSceNotification -lSceAppInstUtil
