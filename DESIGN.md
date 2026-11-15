@@ -131,7 +131,7 @@ nullfs `app0 -> /system_ex/app/<TID>` (app0 = cache dir for FPKG, game folder fo
 for a Folder with a backport a unionfs of the backport dir on top (SMP
 `mount_backport_overlay`), then `sceAppInstUtilAppInstallTitleDir` (fallback InstallAll).
 `/system_ex` is read-only unless etaHEN, SMP or kstuff-lite remounted it (elfldr does not): when
-`mkdir /system_ex/app/<TID>` fails with EROFS, register remounts it once like SMP `remount_system_ex`
+`mkdir -p /system_ex/app/<TID>` fails with EROFS, register remounts it once like SMP `remount_system_ex`
 (`nmount` MNT_UPDATE of `/dev/ssd0.system_ex`) and retries. An existing title dir (EEXIST) needs no remount.
 
 ## Launch (`src/launch.rs`)
@@ -214,8 +214,8 @@ pub fn watch(titles: Arc<Mutex<HashSet<String>>>, running: Arc<Mutex<HashSet<Str
 
 ## Web API (`src/web.rs`, port 8097, served to `src/ui.html`)
 - `GET /` ui.html (`__VERSION__` filled in); `GET /app-icon.png` the app icon (`ps5/icon0.png`);
-  `GET /bg.jpg` the background (`src/bg.jpg`); `GET /kraken.appcache` the AppCache manifest
-  (version + page hash, with `/bg.jpg` in its `CACHE` section). These four are `no-cache`, the rest `no-store`.
+  `GET /kraken.appcache` the AppCache manifest (version + page hash). These three are `no-cache`,
+  the rest `no-store`.
 - `GET /api/state`:
   `{version, busy, paused, waiting:"kstuff"|"shadowmount"|null, running:[TID], games:[{title_id, title_name, version, path, kind:"pkg"|"folder", packing:"plain"|"zstd"|"lz4"|null,
   drive, size, status:"pending"|"checking"|"building"|"ready"|"error"|"duplicate", error, cache_size, cache_built, backport}],

@@ -31,8 +31,8 @@ html { font-size: 0.8333vw; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
-/* Only html gets a colour: a body background would paint over the fixed photo layer. */
-html { background: #0b0b12; }
+/* ps5-dump-forge's page colour (its --page): flat, no photo. */
+html, body { background: #0e0e15; }
 body {
   color: var(--fg); font-family: var(--sans); font-size: 1rem;
   -webkit-font-smoothing: antialiased; overflow-x: hidden;
@@ -40,15 +40,6 @@ body {
 [hidden] { display: none !important; }
 h1, h2, h3, p { margin: 0; }
 img { display: block; }
-/* The gamepad photo, dimmed so white glass and text stay readable over it. */
-.bg {
-  position: fixed; left: 0; top: 0; right: 0; bottom: 0; z-index: -1;
-  background: #0b0b12 url(/bg.jpg) center / cover no-repeat;
-}
-.bg:after {
-  content: ""; position: absolute; left: 0; top: 0; right: 0; bottom: 0;
-  background: linear-gradient(180deg, rgba(8, 8, 16, 0.55), rgba(8, 8, 16, 0.35) 40%, rgba(8, 8, 16, 0.7));
-}
 /* One glass recipe for every surface. */
 .glass {
   background: var(--glass);
@@ -385,7 +376,6 @@ button:disabled { opacity: 0.5; cursor: default; }
 </style>
 </head>
 <body>
-<div class="bg" aria-hidden="true"></div>
 
 <header class="topbar">
   <div class="topbar-in">
@@ -1485,11 +1475,13 @@ function updateCover(c, g) {
     c.img.style.display = 'none';
     var img = c.img, tid = encodeURIComponent(g.title_id), version = '?v=' + encodeURIComponent(key);
     img.onload = function () { img.style.display = 'block'; };
+    // icon0.png (512x512, the home-screen tile) fits the square frames of cards and the sheet;
+    // pic0.png (16:9, 3840x2160, often 10+ MB) is only the fallback when a game has no icon.
     img.onerror = function () {
-      if (img.src.indexOf('/pic/') >= 0) img.src = '/icon/' + tid + version;
+      if (img.src.indexOf('/icon/') >= 0) img.src = '/pic/' + tid + version;
       else { img.style.display = 'none'; c.failed = true; }
     };
-    img.src = '/pic/' + tid + version;
+    img.src = '/icon/' + tid + version;
   }
   c.status = g.status;
 }

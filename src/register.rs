@@ -167,7 +167,7 @@ fn remount_system_ex() -> io::Result<()> {
     crate::sys::nmount_opt(&opts, libc::MNT_UPDATE as i32)
 }
 
-/// SMP mount_title_nullfs: `src` must be a dir with eboot.bin or eboot2.bin; mkdir
+/// SMP mount_title_nullfs: `src` must be a dir with eboot.bin or eboot2.bin; mkdir -p
 /// /system_ex/app/<TID> 0755, then nmount(fstype=nullfs, from, fspath, flags 0). Any other
 /// mount at the target (another tool's copy, a stale nullfs of a rebuilt cache, an old
 /// backport unionfs) is unmounted first.
@@ -180,7 +180,8 @@ fn mount_title_nullfs(title_id: &str, src: &str) -> io::Result<()> {
         return Err(err(format!("nullfs source {src} has no eboot.bin/eboot2.bin")));
     }
     let dst = format!("{SYSTEM_EX_APP}/{title_id}");
-    let mk = || fs::DirBuilder::new().mode(0o755).create(&dst);
+    // Recursive: SMP mkdirs /system_ex/app at start-up. Still EEXIST for a file or a dead mount.
+    let mk = || fs::DirBuilder::new().mode(0o755).recursive(true).create(&dst);
     let made = match mk() {
         // /system_ex is read-only until a tool remounts it (etaHEN, SMP and kstuff-lite do at
         // start-up, elfldr does not). An existing title dir never gets here: mkdir says EEXIST first.

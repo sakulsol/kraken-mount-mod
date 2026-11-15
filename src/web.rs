@@ -17,7 +17,6 @@ const MAX_REQUEST: usize = 16 << 10;
 const LOG_LINES: usize = 100;
 const UI: &str = include_str!("ui.html");
 const APP_ICON: &[u8] = include_bytes!("../ps5/icon0.png");
-const BG: &[u8] = include_bytes!("bg.jpg");
 
 #[derive(Clone)]
 pub struct Game {
@@ -185,7 +184,7 @@ fn cached(ctype: &'static str, body: impl Into<Vec<u8>>) -> Reply {
 /// Its comment changes with the version and the page, so a new build's page is fetched again.
 fn appcache() -> String {
     let hash = UI.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
-    format!("CACHE MANIFEST\n# {} {hash:016x}\nCACHE:\n/\n/app-icon.png\n/bg.jpg\nNETWORK:\n*\n", env!("CARGO_PKG_VERSION"))
+    format!("CACHE MANIFEST\n# {} {hash:016x}\nCACHE:\n/\n/app-icon.png\nNETWORK:\n*\n", env!("CARGO_PKG_VERSION"))
 }
 
 fn no_content() -> Reply {
@@ -278,7 +277,6 @@ fn route(state: &State, head: &str, body: &[u8], loopback: bool) -> Reply {
         ("GET", "/") => cached("text/html; charset=utf-8", UI.replace("__VERSION__", env!("CARGO_PKG_VERSION"))),
         ("GET", "/kraken.appcache") => cached("text/cache-manifest", appcache()),
         ("GET", "/app-icon.png") => cached("image/png", APP_ICON),
-        ("GET", "/bg.jpg") => cached("image/jpeg", BG),
         ("GET", "/api/state") => reply(200, "application/json", api_state(state)),
         ("GET", p) if p.starts_with("/api/sizes/") => sizes(state, &p["/api/sizes/".len()..]),
         ("GET", "/api/settings") => {
