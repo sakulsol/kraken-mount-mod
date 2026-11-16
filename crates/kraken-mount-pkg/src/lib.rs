@@ -18,6 +18,7 @@ pub mod decoder;
 mod kraken;
 mod outer;
 mod pkg;
+mod protected;
 mod tree;
 
 use alloc::string::String;
@@ -71,9 +72,14 @@ pub struct Pkg {
     blocks: Vec<Block>,
     /// Why `blocks()` refuses a file; `Node::blk_err` indexes into it.
     blk_errs: Vec<String>,
+    /// Decrypted protected container entries; `Node::held` indexes into it.
+    held: Vec<Vec<u8>>,
 }
 
 const NO_ERR: u32 = u32::MAX;
+
+/// Why `extents()` and `blocks()` refuse a held (decrypted) file.
+const HELD: &str = "a protected container entry, stored encrypted in the .pkg and decrypted into memory: no plaintext extents or blocks (read it with read_at)";
 
 struct Node {
     path_off: u32,
@@ -89,24 +95,57 @@ struct Node {
     blk_start: u32,
     blk_end: u32,
     blk_err: u32,
+    /// Index into `Pkg::held` for a decrypted protected entry, else `NO_ERR`.
+    held: u32,
 }
 
 /// Container entries that stand in for a `sce_sys` file the inner image lacks (`FP/lib.rs:94-104`).
-const CNT_FALLBACKS: [(u32, &str); 3] = [
+/// dump-forge's `container_paths` (`cnt_write.rs` PRESENTATION and PROTECTED): the image's own
+/// copy wins. Protected ones (`flags1` bit 31) are decrypted with the debug passcode and held in
+/// memory; one that does not decrypt is left out (the image may still have the file).
+const CNT_FALLBACKS: [(u32, &str); 16] = [
     (0x1200, "sce_sys/icon0.png"),
     (0x1280, "sce_sys/icon0.dds"),
     (0x2000, "sce_sys/param.json"),
+    (0x1006, "sce_sys/pic1.png"),
+    (0x100D, "sce_sys/save_data.png"),
+    (0x1220, "sce_sys/pic0.png"),
+    (0x1240, "sce_sys/snd0.at9"),
+    (0x12A0, "sce_sys/pic0.dds"),
+    (0x12C0, "sce_sys/pic1.dds"),
+    (0x1480, "sce_sys/trophy2/trophy00.ucp"),
+    (0x14A0, "sce_sys/uds/uds00.ucp"),
+    (0x2040, "sce_sys/pic2.png"),
+    (0x2060, "sce_sys/pic2.dds"),
+    (0x0402, "sce_sys/nptitle.dat"),
+    (0x2020, "sce_sys/uds/npbind.dat"),
+    (0x2021, "sce_sys/trophy2/npbind.dat"),
 ];
 
-fn table(image: pkg::Image, mut walked: Vec<tree::Walked>) -> Result<Pkg, Error> {
+fn table<R: PRead>(io: &R, len: u64, image: pkg::Image, mut walked: Vec<tree::Walked>) -> Result<Pkg, Error> {
     let has = |w: &[tree::Walked], p: &str| w.iter().any(|x| x.path == p);
+    let mut held = Vec::new();
+    let mut held_paths: Vec<(&str, u32)> = Vec::new();
     for (id, path) in CNT_FALLBACKS {
         let Some(e) = image.cnt.entry(id) else { continue };
-        if e.flags1 & 0x8000_0000 != 0 || e.size == 0 || has(&walked, path) {
+        if e.size == 0 || has(&walked, path) {
             continue;
         }
-        if !has(&walked, "sce_sys") {
-            walked.push(tree::Walked { path: "sce_sys".into(), is_dir: true, size: 0, logical: 0, cnt_at: None });
+        let protected = e.flags1 & protected::FLAG != 0;
+        if protected {
+            match protected::plaintext(io, len, &image.cnt, &e) {
+                Ok(data) => {
+                    held_paths.push((path, held.len() as u32));
+                    held.push(data);
+                }
+                Err(_) => continue,
+            }
+        }
+        // Parent directories, outermost first ("sce_sys", then "sce_sys/trophy2").
+        for (i, _) in path.match_indices('/') {
+            if !has(&walked, &path[..i]) {
+                walked.push(tree::Walked { path: path[..i].into(), is_dir: true, size: 0, logical: 0, cnt_at: None });
+            }
         }
         walked.push(tree::Walked { path: path.into(), is_dir: false, size: e.size, logical: 0, cnt_at: Some(e.at) });
     }
@@ -127,7 +166,12 @@ fn table(image: pkg::Image, mut walked: Vec<tree::Walked>) -> Result<Pkg, Error>
         let blk_start = blocks.len() as u32;
         let mut ext_ok = true;
         let mut blk_err = NO_ERR;
-        if !w.is_dir {
+        let held_ix = held_paths.iter().find(|(p, _)| *p == w.path).map_or(NO_ERR, |&(_, i)| i);
+        if held_ix != NO_ERR {
+            ext_ok = false;
+            blk_err = blk_errs.len() as u32;
+            blk_errs.push(alloc::format!("{}: {HELD}", w.path));
+        } else if !w.is_dir {
             tmp.clear();
             match w.cnt_at {
                 Some(at) if w.size > 0 => tmp.push(Extent { pkg_off: at, len: w.size }),
@@ -174,6 +218,7 @@ fn table(image: pkg::Image, mut walked: Vec<tree::Walked>) -> Result<Pkg, Error>
             blk_start,
             blk_end: blocks.len() as u32,
             blk_err,
+            held: held_ix,
         });
         arena.push_str(&w.path);
     }
@@ -181,7 +226,7 @@ fn table(image: pkg::Image, mut walked: Vec<tree::Walked>) -> Result<Pkg, Error>
     extents.shrink_to_fit();
     ext_pos.shrink_to_fit();
     blocks.shrink_to_fit();
-    Ok(Pkg { image, arena, nodes, extents, ext_pos, blocks, blk_errs })
+    Ok(Pkg { image, arena, nodes, extents, ext_pos, blocks, blk_errs, held })
 }
 
 /// A CNT file as raw pseudo-blocks of at most 256 KiB, back to back from `at`.
@@ -264,7 +309,7 @@ impl Pkg {
     pub fn open<R: PRead>(io: &R, len: u64) -> Result<Pkg, Error> {
         let image = pkg::Image::open(io, len)?;
         let walked = tree::walk(io, &image)?;
-        table(image, walked)
+        table(io, len, image, walked)
     }
 
     fn entry(&self, i: usize) -> Entry<'_> {
@@ -301,6 +346,7 @@ impl Pkg {
         match self.file(e) {
             None => Ok(&[]),
             Some(n) if n.ext_ok => Ok(&self.extents[n.ext_start as usize..n.ext_end as usize]),
+            Some(n) if n.held != NO_ERR => Err(pkg::unsupported(alloc::format!("{}: {HELD}", e.path))),
             Some(_) if self.has_sparse(e) => Err(pkg::unsupported(alloc::format!("{}: has sparse holes (zeros, nothing stored), no plaintext extents", e.path))),
             Some(_) => Err(pkg::unsupported(alloc::format!("{}: has Kraken-compressed blocks, no plaintext extents", e.path))),
         }
@@ -319,7 +365,7 @@ impl Pkg {
 
     /// Whether `e`'s data overlaps a sparse hole (its blocks then include zero blocks).
     pub fn has_sparse(&self, e: &Entry) -> bool {
-        self.file(e).is_some_and(|n| !n.ext_ok && n.size != 0
+        self.file(e).is_some_and(|n| !n.ext_ok && n.held == NO_ERR && n.size != 0
             && self.image.kraken.range(n.logical, n.size).iter().any(|b| b.sparse()))
     }
 
@@ -331,6 +377,10 @@ impl Pkg {
             return Ok(0);
         }
         let want = (n.size - off).min(buf.len() as u64) as usize;
+        if let Some(data) = self.held.get(n.held as usize) {
+            buf[..want].copy_from_slice(&data[off as usize..off as usize + want]);
+            return Ok(want);
+        }
         if !n.ext_ok {
             let mut dec = pkg::Decoder::new();
             self.image.read_mount(io, n.logical + off, &mut buf[..want], &mut dec)?;

@@ -151,9 +151,13 @@ pub(crate) struct CntEntry {
     pub id: u32,
     /// `flags1 & 0x8000_0000`: an encrypted entry, not a plain copy of anything.
     pub flags1: u32,
+    /// For a protected entry the key index is `flags2 >> 12`.
+    pub flags2: u32,
     /// Absolute offset in the package.
     pub at: u64,
     pub size: u64,
+    /// The entry's 32-byte table row as stored: a protected entry's key depends on it.
+    pub row: [u8; 32],
 }
 
 #[allow(dead_code)]
@@ -191,7 +195,9 @@ pub(crate) fn container<R: PRead>(io: &R, len: u64, cnt_offset: u64) -> Result<C
         if at.checked_add(size).map_or(true, |e| e > len) {
             return Err(corrupt(format!("container entry {id:#06x} runs past the end (truncated?)")));
         }
-        entries.push(CntEntry { id, flags1: be32(row, 8), at, size });
+        let mut raw = [0u8; 32];
+        raw.copy_from_slice(row);
+        entries.push(CntEntry { id, flags1: be32(row, 8), flags2: be32(row, 12), at, size, row: raw });
     }
     let id = &head[0x40..0x64];
     let id_len = id.iter().position(|&b| b == 0).unwrap_or(id.len());

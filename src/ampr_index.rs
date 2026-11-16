@@ -261,8 +261,9 @@ fn plan(path: &str, size: u64, blocks: &[Chunk], vol_size: u64) -> Result<Plan> 
     Ok(Plan { chunks, flags: FILE_PACKED, zeros })
 }
 
-/// Whether `chunks` can be packed as `plan` packs them (the 256 KiB block grid): a file whose
-/// holes do not start and end on that grid is extracted instead (cache.rs).
+/// Whether `chunks` can be packed as `plan` packs them (the 256 KiB block grid). cache.rs extracts
+/// any file this refuses: holes that do not start and end on that grid, or a short compressed
+/// block decoding past the file's end (several small files packed into one block).
 pub fn packable(size: u64, chunks: &[Chunk]) -> bool {
     plan("", size, chunks, KRAKEN_OFFSET_LIMIT - 1).is_ok()
 }

@@ -32,16 +32,43 @@ fn ctx<T>(r: io::Result<T>, what: impl FnOnce() -> String) -> io::Result<T> {
     r.map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", what())))
 }
 
+/// SMP copy_param_json_rewrite: the first `upgradable` becomes `standard` (applicationDrmType),
+/// so the system does not treat the title as an upgradable (disc/patch) app. True when patched.
+fn patch_param_json(buf: &mut Vec<u8>) -> bool {
+    const FROM: &[u8] = b"upgradable";
+    let Some(i) = buf.windows(FROM.len()).position(|w| w == FROM) else { return false };
+    buf.splice(i..i + FROM.len(), b"standard".iter().copied());
+    true
+}
+
+/// One staged file: overwritten when present, then 0666, since fs::copy keeps the source's mode
+/// and a 0600 file from a game folder would stay unreadable for the trophy and save services.
+/// A file named param.json gets patch_param_json (only these staged copies, never the game's).
+fn copy_file(title_id: &str, src: &Path, dst: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    if src.file_name().is_some_and(|n| n == "param.json") {
+        let mut buf = fs::read(src)?;
+        let patched = patch_param_json(&mut buf);
+        fs::write(dst, &buf)?;
+        if patched {
+            log!("{title_id}: param.json patched: {}", dst.display());
+        }
+    } else {
+        fs::copy(src, dst)?;
+    }
+    fs::set_permissions(dst, fs::Permissions::from_mode(0o666))
+}
+
 /// Recursive copy, like SMP copy_dir: existing files are overwritten.
-fn copy_dir(src: &Path, dst: &Path) -> io::Result<()> {
+fn copy_dir(title_id: &str, src: &Path, dst: &Path) -> io::Result<()> {
     fs::create_dir_all(dst)?;
     for e in fs::read_dir(src)? {
         let e = e?;
         let (s, d) = (e.path(), dst.join(e.file_name()));
         if e.file_type()?.is_dir() {
-            copy_dir(&s, &d)?;
+            copy_dir(title_id, &s, &d)?;
         } else {
-            fs::copy(&s, &d)?;
+            copy_file(title_id, &s, &d)?;
         }
     }
     Ok(())
@@ -57,7 +84,7 @@ fn is_appmeta_file(name: &str) -> bool {
 }
 
 /// Top-level param.json, param.sfo, *.png, *.dds, *.at9 from sce_sys into /user/appmeta/<TID>.
-fn copy_appmeta(src_sce_sys: &Path, dst: &Path) -> io::Result<()> {
+fn copy_appmeta(title_id: &str, src_sce_sys: &Path, dst: &Path) -> io::Result<()> {
     fs::create_dir_all(dst)?;
     for e in fs::read_dir(src_sce_sys)? {
         let e = e?;
@@ -66,21 +93,32 @@ fn copy_appmeta(src_sce_sys: &Path, dst: &Path) -> io::Result<()> {
         if !is_appmeta_file(name_str) || !e.file_type()?.is_file() {
             continue;
         }
-        fs::copy(e.path(), dst.join(&name))?;
+        copy_file(title_id, &e.path(), &dst.join(&name))?;
     }
     Ok(())
 }
 
 /// SMP update_trophy_metadata: copy npbind.dat files and param.json to
 /// /system_data/priv/appmeta/<TID> when present in the source and absent at the destination.
+/// One already there is not overwritten, but gets +0444 when a read bit is missing, so the
+/// trophy service (another uid) can read it.
 fn update_trophy_metadata(title_id: &str, src_sce_sys: &Path) -> io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let base = Path::new(TROPHY_BASE).join(title_id);
     fs::create_dir_all(base.join("trophy2"))?;
     fs::create_dir_all(base.join("uds"))?;
     for rel in ["trophy2/npbind.dat", "uds/npbind.dat", "param.json"] {
         let (s, d) = (src_sce_sys.join(rel), base.join(rel));
-        if s.exists() && !d.exists() {
-            ctx(fs::copy(&s, &d), || format!("copy {} -> {}", s.display(), d.display()))?;
+        if !s.exists() {
+            continue;
+        }
+        match fs::metadata(&d) {
+            Err(_) => ctx(copy_file(title_id, &s, &d), || format!("copy {} -> {}", s.display(), d.display()))?,
+            Ok(m) if m.is_file() && m.mode() & 0o444 != 0o444 => {
+                let mode = fs::Permissions::from_mode((m.mode() & 0o7777) | 0o444);
+                ctx(fs::set_permissions(&d, mode), || format!("chmod {}", d.display()))?;
+            }
+            Ok(_) => {}
         }
     }
     Ok(())
@@ -367,15 +405,15 @@ pub fn register(title_id: &str, app0: &Path, sce_sys: &Path, backport: Option<&P
 fn register_inner(title_id: &str, app0: &Path, sce_sys: &Path, backport: Option<&Path>) -> io::Result<()> {
     let app_dir = Path::new(APP_BASE).join(title_id);
     let user_sce_sys = app_dir.join("sce_sys");
-    ctx(copy_dir(sce_sys, &user_sce_sys), || {
+    ctx(copy_dir(title_id, sce_sys, &user_sce_sys), || {
         format!("copy {} -> {}", sce_sys.display(), user_sce_sys.display())
     })?;
     let (icon_src, icon_dst) = (sce_sys.join("icon0.png"), app_dir.join("icon0.png"));
-    ctx(fs::copy(&icon_src, &icon_dst), || {
+    ctx(copy_file(title_id, &icon_src, &icon_dst), || {
         format!("copy {} -> {}", icon_src.display(), icon_dst.display())
     })?;
     let appmeta = Path::new(APPMETA_BASE).join(title_id);
-    ctx(copy_appmeta(sce_sys, &appmeta), || format!("appmeta -> {}", appmeta.display()))?;
+    ctx(copy_appmeta(title_id, sce_sys, &appmeta), || format!("appmeta -> {}", appmeta.display()))?;
     ctx(update_trophy_metadata(title_id, sce_sys), || "trophy metadata".into())?;
     mount_inner(title_id, app0, backport, false)?;
     install_title_dir(title_id)
