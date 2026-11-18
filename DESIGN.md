@@ -37,6 +37,12 @@ Default scan roots: SMP `SM_DEFAULT_SCAN_PATHS_INITIALIZER` order, only for driv
 (`/data/homebrew`, `/data/etaHEN/games`, ext `homebrew`/`etaHEN/games`, usb `homebrew`, usb `etaHEN/games`,
 usb roots, ext roots). `scanpath=` lines in config replace them.
 A dir named `backports` in a scan root is never a game.
+Title name (`scan::parse_param`, as Dump Forge's gameTitle): the `localizedParameters` `titleName` in the
+console language (`i18n::title_tag`: `SCE_SYSTEM_PARAM_LANG_*` -> its param.json tag, all 31 languages,
+en-US when unreadable), else the same language in another region (es-419 -> es-ES), else the default
+language's, else en-US, else any, else the title id; blank names skipped. Read at each parse, so a language
+change shows on the next scan (an unbuilt pkg's memoized read keeps its first language until it changes).
+It is display only: UI, sort order, toasts, logs.
 Eject (`POST /api/eject`): `/mnt/usb0..7` and `/mnt/ext0` are ejectable (`/mnt/ext1` is the M.2 slot,
 SMP `sm_usb_mount_path`). The request goes to the system automounter over IPMI to `SceAutoMounterIpc`
 in `ps5/usb.c` (`km_usb_eject`, a port of SMP `sm_usb.c`), which checks the mount still has the
@@ -284,7 +290,7 @@ pub struct ScanResult { pub games: Vec<Source>, pub duplicates: Vec<Source>, pub
   pub unstable: Vec<(std::path::PathBuf, Option<String> /* title id when known */)> } // still being copied: skipped, not gone
 pub fn scan(roots: &[String], backports: bool, stability_wait: u64) -> ScanResult;  // memoizes pkg param reads by (path, size, mtime)
 pub fn still_written(paths: &[std::path::PathBuf], wait: u64) -> Option<u64>; // age in s of the youngest max(mtime, ctime) under wait; None = stable
-pub fn parse_param(json: &[u8]) -> std::io::Result<(String, String, String)>; // (title_id, title_name, version)
+pub fn parse_param(json: &[u8]) -> std::io::Result<(String, String, String)>; // (title_id, title_name, version); name: see below
 pub fn valid_tid(t: &str) -> bool;
 
 // cache.rs

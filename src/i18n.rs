@@ -46,14 +46,31 @@ extern "C" {
 /// The console's language now (read per toast, so a change applies without a restart);
 /// English when it can't be read.
 pub fn lang() -> Lang {
+    console_code().map_or(Lang::En, Lang::from_console)
+}
+
+/// `SCE_SYSTEM_PARAM_LANG_*` of the console now, None when it can't be read.
+fn console_code() -> Option<i32> {
     /// `SCE_SYSTEM_SERVICE_PARAM_ID_LANG`.
     const LANG: i32 = 1;
     let mut code = -1;
     // SAFETY: one i32 out-parameter that outlives the call.
-    if unsafe { sceSystemServiceParamGetInt(LANG, &mut code) } == 0 {
-        return Lang::from_console(code);
-    }
-    Lang::En
+    (unsafe { sceSystemServiceParamGetInt(LANG, &mut code) } == 0).then_some(code)
+}
+
+/// param.json `localizedParameters` tags by `SCE_SYSTEM_PARAM_LANG_*` (SMP sm_l10n.c order, the
+/// tags LibProsperoPkg writes).
+const TITLE_TAGS: [&str; 31] = [
+    "ja-JP", "en-US", "fr-FR", "es-ES", "de-DE", "it-IT", "nl-NL", "pt-PT", "ru-RU", "ko-KR",
+    "zh-Hant", "zh-Hans", "fi-FI", "sv-SE", "da-DK", "no-NO", "pl-PL", "pt-BR", "en-GB", "tr-TR",
+    "es-419", "ar-AE", "fr-CA", "cs-CZ", "hu-HU", "el-GR", "ro-RO", "th-TH", "vi-VN", "id-ID",
+    "uk-UA",
+];
+
+/// The console language's `localizedParameters` tag (all 31 console languages, not only the 11
+/// toast languages); en-US when it can't be read.
+pub fn title_tag() -> &'static str {
+    console_code().and_then(|c| TITLE_TAGS.get(usize::try_from(c).ok()?)).copied().unwrap_or("en-US")
 }
 
 /// The payload is up and serving the web UI.

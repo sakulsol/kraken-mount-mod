@@ -319,8 +319,10 @@ pub fn parse_param(json: &[u8]) -> io::Result<(String, String, String)> {
         return Err(Error::new(ErrorKind::InvalidData, format!("param.json: bad titleId {tid:?}")));
     }
     let lp = &v["localizedParameters"];
-    let name = lp["defaultLanguage"].as_str()
-        .and_then(|lang| lp[lang]["titleName"].as_str())
+    // ponytail: the console language at parse time; an unbuilt pkg's memoized name keeps the
+    // language of its first read until the pkg changes or the payload restarts.
+    let name = local_title(lp, crate::i18n::title_tag())
+        .or_else(|| lp["defaultLanguage"].as_str().and_then(|lang| lp[lang]["titleName"].as_str()))
         .filter(|name| !name.is_empty())
         .or_else(|| lp["en-US"]["titleName"].as_str().filter(|name| !name.is_empty()))
         .or_else(|| lp.as_object().and_then(|langs| langs.values()
@@ -328,6 +330,18 @@ pub fn parse_param(json: &[u8]) -> io::Result<(String, String, String)> {
         .unwrap_or(tid);
     Ok((tid.to_owned(), name.to_owned(), v["contentVersion"].as_str().unwrap_or_default().to_owned()))
 }
+/// The `localizedParameters` title for language tag `want`: that tag (any case), else the same
+/// language in another region (es-419 -> es-ES, en-GB -> en-US), as Dump Forge's gameTitle; blank
+/// names do not count.
+fn local_title<'a>(lp: &'a serde_json::Value, want: &str) -> Option<&'a str> {
+    let langs = lp.as_object()?;
+    let base = |t: &str| t.split('-').next().unwrap_or("").to_ascii_lowercase();
+    let name = |v: &'a serde_json::Value| v["titleName"].as_str().filter(|n| !n.trim().is_empty());
+    let titles = || langs.iter().filter(|(k, _)| *k != "defaultLanguage");
+    titles().find(|(k, _)| k.eq_ignore_ascii_case(want)).and_then(|(_, v)| name(v))
+        .or_else(|| titles().filter(|(k, _)| base(k) == base(want)).find_map(|(_, v)| name(v)))
+}
+
 /// Game title ids only: NPXS ids are system apps (SMP is_supported_game_title_id).
 pub fn valid_tid(t: &str) -> bool {
     let b = t.as_bytes();
