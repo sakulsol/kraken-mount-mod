@@ -139,7 +139,8 @@ button.shoulder:hover { color: var(--fg); }
   border-radius: 999px; font-size: 0.92rem; white-space: nowrap; min-width: 0; overflow: hidden;
 }
 .storage-pill b { font-weight: 600; }
-.storage-pill b, .storage-pill > span:last-child { flex: none; }
+.storage-pill b, .storage-pill > span:last-of-type, .storage-pill .eject { flex: none; }
+.storage-pill .eject { height: 2rem; padding: 0 0.8rem; }
 /* On one row with the filters: the meters give up width first when many drives are mounted. */
 .storage-pill .meter { min-width: 1.5rem; }
 .meter { width: 7rem; height: 0.4rem; border-radius: 999px; background: rgba(255, 255, 255, 0.16); overflow: hidden; }
@@ -309,6 +310,7 @@ button:disabled { opacity: 0.5; cursor: default; }
   box-shadow: var(--glass-edge), var(--glass-drop); overflow-wrap: break-word;
 }
 .banner.warn { background: rgba(125, 83, 26, 0.34); color: #fff0cf; }
+.banner.ok { background: var(--glass); color: var(--fg); }
 .banner.show { display: block; }
 .banner:first-child { margin-top: 1rem; }
 .card .status-pill, .card .running-pill {
@@ -404,6 +406,7 @@ button:disabled { opacity: 0.5; cursor: default; }
   <div class="banner warn" id="noampr" role="status" data-i18n="noAmpr" data-args="file=libSceAmpr.sprx;dir=/data/krakenmount/ampr/" data-wrap="file=b">ampr-emu-ng is missing: put <b>libSceAmpr.sprx</b> into /data/krakenmount/ampr/. FPKG games cannot run without it.</div>
   <div class="banner warn" id="paused" role="status"></div>
   <div class="banner warn" id="waiting" role="status"></div>
+  <div class="banner" id="eject" role="status"></div>
 </div>
 
 <main>
@@ -534,6 +537,8 @@ var MSG = {
     kindAll: 'All', kindFolders: 'Folders', badgeFolder: 'Folder',
     driveInternal: 'Internal', driveUsb: 'USB {n}', driveExt: 'Extended {n}',
     driveFree: 'free {free} of {total}',
+    eject: 'Unmount', ejecting: 'Unmounting...', ejectAria: 'Unmount {drive}', ejectTitle: 'Unmount {drive}?',
+    ejectText: 'Keep the drive connected until this finishes. Games on it leave the library.', ejected: '{drive} unmounted. You can disconnect it now.', ejectFailed: 'Could not unmount {drive}: {reason}',
     stPending: 'Pending', stChecking: 'Checking', stBuilding: 'Building', stReady: 'Ready',
     stError: 'Error', stDuplicate: 'Duplicate', running: 'Running',
     statusRunning: '{status} · running',
@@ -618,6 +623,8 @@ var MSG = {
     kindAll: 'Все', kindFolders: 'Папки', badgeFolder: 'Папка',
     driveInternal: 'Внутренний', driveUsb: 'USB {n}', driveExt: 'Расширенный {n}',
     driveFree: 'свободно {free} из {total}',
+    eject: 'Размонтировать', ejecting: 'Размонтирование...', ejectAria: 'Размонтировать {drive}', ejectTitle: 'Размонтировать {drive}?',
+    ejectText: 'Не отключайте накопитель, пока операция не завершится. Игры с него пропадут из библиотеки.', ejected: '{drive} размонтирован. Теперь его можно отключить.', ejectFailed: 'Не удалось размонтировать {drive}: {reason}',
     stPending: 'Ожидает', stChecking: 'Проверка', stBuilding: 'Сборка', stReady: 'Готово',
     stError: 'Ошибка', stDuplicate: 'Дубликат', running: 'Запущена',
     statusRunning: '{status} · запущена',
@@ -699,6 +706,8 @@ var MSG = {
     kindAll: '全部', kindFolders: '文件夹', badgeFolder: '文件夹',
     driveInternal: '内部', driveUsb: 'USB {n}', driveExt: '扩展 {n}',
     driveFree: '可用 {free}，共 {total}',
+    eject: '弹出', ejecting: '正在弹出...', ejectAria: '弹出 {drive}', ejectTitle: '弹出 {drive}？',
+    ejectText: '完成前请保持驱动器连接。其中的游戏将从游戏库中移除。', ejected: '{drive} 已弹出，现在可以断开连接。', ejectFailed: '无法弹出 {drive}：{reason}',
     stPending: '等待中', stChecking: '检查中', stBuilding: '构建中', stReady: '就绪',
     stError: '错误', stDuplicate: '重复', running: '运行中',
     statusRunning: '{status} · 运行中',
@@ -780,6 +789,8 @@ var MSG = {
     kindAll: 'Alle', kindFolders: 'Ordner', badgeFolder: 'Ordner',
     driveInternal: 'Intern', driveUsb: 'USB {n}', driveExt: 'Erweitert {n}',
     driveFree: '{free} von {total} frei',
+    eject: 'Aushängen', ejecting: 'Wird ausgehängt...', ejectAria: '{drive} aushängen', ejectTitle: '{drive} aushängen?',
+    ejectText: 'Lassen Sie das Laufwerk angeschlossen, bis der Vorgang abgeschlossen ist. Die Spiele darauf verschwinden aus der Bibliothek.', ejected: '{drive} ausgehängt. Sie können es jetzt trennen.', ejectFailed: '{drive} konnte nicht ausgehängt werden: {reason}',
     stPending: 'Ausstehend', stChecking: 'Wird geprüft', stBuilding: 'Wird erstellt', stReady: 'Bereit',
     stError: 'Fehler', stDuplicate: 'Duplikat', running: 'Läuft',
     statusRunning: '{status} · läuft',
@@ -861,6 +872,8 @@ var MSG = {
     kindAll: 'Todos', kindFolders: 'Carpetas', badgeFolder: 'Carpeta',
     driveInternal: 'Interno', driveUsb: 'USB {n}', driveExt: 'Ampliado {n}',
     driveFree: 'libre: {free} de {total}',
+    eject: 'Desmontar', ejecting: 'Desmontando...', ejectAria: 'Desmontar {drive}', ejectTitle: '¿Desmontar {drive}?',
+    ejectText: 'Mantén la unidad conectada hasta que termine. Sus juegos saldrán de la biblioteca.', ejected: '{drive} se desmontó. Ya puedes desconectar la unidad.', ejectFailed: 'No se pudo desmontar {drive}: {reason}',
     stPending: 'Pendiente', stChecking: 'Comprobando', stBuilding: 'Creando', stReady: 'Listo',
     stError: 'Error', stDuplicate: 'Duplicado', running: 'En curso',
     statusRunning: '{status} · en curso',
@@ -942,6 +955,8 @@ var MSG = {
     kindAll: 'Tous', kindFolders: 'Dossiers', badgeFolder: 'Dossier',
     driveInternal: 'Interne', driveUsb: 'USB {n}', driveExt: 'Étendu {n}',
     driveFree: '{free} libres sur {total}',
+    eject: 'Démonter', ejecting: 'Démontage...', ejectAria: 'Démonter {drive}', ejectTitle: 'Démonter {drive} ?',
+    ejectText: 'Laissez le disque branché jusqu\'à la fin. Ses jeux quittent la bibliothèque.', ejected: '{drive} est démonté. Vous pouvez le débrancher.', ejectFailed: 'Impossible de démonter {drive} : {reason}',
     stPending: 'En attente', stChecking: 'Vérification', stBuilding: 'Création', stReady: 'Prêt',
     stError: 'Erreur', stDuplicate: 'Doublon', running: 'En cours',
     statusRunning: '{status} · en cours',
@@ -1023,6 +1038,8 @@ var MSG = {
     kindAll: 'すべて', kindFolders: 'フォルダー', badgeFolder: 'フォルダー',
     driveInternal: '内蔵', driveUsb: 'USB {n}', driveExt: '拡張 {n}',
     driveFree: '空き {free} / {total}',
+    eject: 'マウント解除', ejecting: '解除中...', ejectAria: '{drive} のマウントを解除', ejectTitle: '{drive} のマウントを解除しますか？',
+    ejectText: '完了するまでドライブを接続したままにしてください。このドライブのゲームはライブラリから外れます。', ejected: '{drive} のマウントを解除しました。取り外せます。', ejectFailed: '{drive} のマウントを解除できませんでした: {reason}',
     stPending: '待機中', stChecking: '確認中', stBuilding: '作成中', stReady: '準備完了',
     stError: 'エラー', stDuplicate: '重複', running: '実行中',
     statusRunning: '{status} · 実行中',
@@ -1104,6 +1121,8 @@ var MSG = {
     kindAll: 'Todos', kindFolders: 'Pastas', badgeFolder: 'Pasta',
     driveInternal: 'Interno', driveUsb: 'USB {n}', driveExt: 'Estendido {n}',
     driveFree: 'livre: {free} de {total}',
+    eject: 'Desmontar', ejecting: 'Desmontando...', ejectAria: 'Desmontar {drive}', ejectTitle: 'Desmontar {drive}?',
+    ejectText: 'Mantenha a unidade conectada até terminar. Os jogos dela saem da biblioteca.', ejected: 'Desmontagem de {drive} concluída. Você já pode desconectar a unidade.', ejectFailed: 'Não foi possível desmontar {drive}: {reason}',
     stPending: 'Pendente', stChecking: 'Verificando', stBuilding: 'Criando', stReady: 'Pronto',
     stError: 'Erro', stDuplicate: 'Duplicado', running: 'Em execução',
     statusRunning: '{status} · em execução',
@@ -1185,6 +1204,8 @@ var MSG = {
     kindAll: 'Tutti', kindFolders: 'Cartelle', badgeFolder: 'Cartella',
     driveInternal: 'Interno', driveUsb: 'USB {n}', driveExt: 'Esteso {n}',
     driveFree: 'liberi {free} su {total}',
+    eject: 'Smonta', ejecting: 'Smontaggio...', ejectAria: 'Smonta {drive}', ejectTitle: 'Smontare {drive}?',
+    ejectText: 'Tieni l\'unità collegata finché non finisce. I suoi giochi escono dalla libreria.', ejected: 'Smontaggio di {drive} completato. Ora puoi scollegare l\'unità.', ejectFailed: 'Impossibile smontare {drive}: {reason}',
     stPending: 'In attesa', stChecking: 'Verifica', stBuilding: 'Creazione', stReady: 'Pronto',
     stError: 'Errore', stDuplicate: 'Duplicato', running: 'In esecuzione',
     statusRunning: '{status} · in esecuzione',
@@ -1266,6 +1287,8 @@ var MSG = {
     kindAll: '전체', kindFolders: '폴더', badgeFolder: '폴더',
     driveInternal: '내장', driveUsb: 'USB {n}', driveExt: '확장 {n}',
     driveFree: '{total} 중 {free} 사용 가능',
+    eject: '마운트 해제', ejecting: '해제 중...', ejectAria: '{drive} 마운트 해제', ejectTitle: '{drive} 마운트를 해제할까요?',
+    ejectText: '완료될 때까지 드라이브를 연결해 두세요. 이 드라이브의 게임은 라이브러리에서 사라집니다.', ejected: '{drive} 마운트를 해제했습니다. 이제 분리해도 됩니다.', ejectFailed: '{drive} 마운트를 해제하지 못했습니다: {reason}',
     stPending: '대기 중', stChecking: '확인 중', stBuilding: '생성 중', stReady: '준비됨',
     stError: '오류', stDuplicate: '중복', running: '실행 중',
     statusRunning: '{status} · 실행 중',
@@ -1347,6 +1370,8 @@ var MSG = {
     kindAll: 'الكل', kindFolders: 'المجلدات', badgeFolder: 'مجلد',
     driveInternal: 'داخلي', driveUsb: 'USB {n}', driveExt: 'موسّع {n}',
     driveFree: 'متاح {free} من {total}',
+    eject: 'إلغاء التركيب', ejecting: 'جارٍ إلغاء التركيب...', ejectAria: 'إلغاء تركيب {drive}', ejectTitle: 'إلغاء تركيب {drive}؟',
+    ejectText: 'أبقِ محرك الأقراص متصلًا حتى تنتهي العملية. ستخرج ألعابه من المكتبة.', ejected: 'تم إلغاء تركيب {drive}. يمكنك فصله الآن.', ejectFailed: 'تعذّر إلغاء تركيب {drive}: {reason}',
     stPending: 'قيد الانتظار', stChecking: 'جارٍ الفحص', stBuilding: 'جارٍ الإنشاء', stReady: 'جاهز',
     stError: 'خطأ', stDuplicate: 'مكرر', running: 'قيد التشغيل',
     statusRunning: '{status} · قيد التشغيل',
@@ -1693,18 +1718,27 @@ function renderStorage(drives) {
   if (internal) list.push(internal);
   var box = $('storage');
   box.hidden = !list.length;
-  var key = list.map(function (d) { return d.mount; }).join('|');
+  var key = list.map(function (d) { return d.mount + (d.ejectable ? '*' : ''); }).join('|');
   if (box.getAttribute('data-key') !== key) {
+    var hadFocus = box.contains(document.activeElement);
     box.setAttribute('data-key', key);
     box.textContent = '';
-    list.forEach(function () {
+    list.forEach(function (d) {
       var pill = el('div', 'storage-pill glass'), meter = el('span', 'meter');
       meter.appendChild(el('i'));
       pill.appendChild(el('b'));
       pill.appendChild(meter);
       pill.appendChild(el('span'));
+      if (d.ejectable) {
+        var btn = el('button', 'small eject');
+        btn.type = 'button';
+        btn.setAttribute('data-mount', d.mount);
+        btn.onclick = function () { askEject(d.mount); };
+        pill.appendChild(btn);
+      }
       box.appendChild(pill);
     });
+    if (hadFocus) focusChip();
   }
   list.forEach(function (d, i) {
     var pill = box.children[i];
@@ -1712,6 +1746,41 @@ function renderStorage(drives) {
     setText(pill.children[0], driveLabel(d.mount));
     pill.children[1].firstChild.style.width = used.toFixed(1) + '%';
     setText(pill.children[2], t('driveFree', { free: fmtSize(d.free), total: fmtSize(d.total) }));
+    var btn = pill.children[3];
+    if (btn) {
+      btn.disabled = ejecting != null;
+      setText(btn, t(ejecting === d.mount ? 'ejecting' : 'eject'));
+      btn.setAttribute('aria-label', t('ejectAria', { drive: driveLabel(d.mount) }));
+    }
+  });
+}
+// One unmount at a time; the server answers within ~6 s. The reason comes from the server, in English.
+var ejecting = null, ejectTimer = null;
+function ejectBanner(text, ok) {
+  clearTimeout(ejectTimer);
+  $('eject').classList.toggle('ok', !!ok);
+  setBanner('eject', !!text, text || function () { return ''; });
+  if (ok) ejectTimer = setTimeout(function () { setBanner('eject', false); }, 8000);
+}
+function askEject(mount) {
+  var drive = function () { return driveLabel(mount); };
+  ask(t('ejectTitle', { drive: drive() }), t('ejectText'), t('eject'), async function () {
+    ejecting = mount;
+    ejectBanner(null);
+    if (state) renderStorage(state.drives);
+    try {
+      var r = await fetch('/api/eject', { method: 'POST', body: mount });
+      if (!r.ok) throw new Error((await r.text()) || 'HTTP ' + r.status);
+      ejectBanner(function () { return t('ejected', { drive: drive() }); }, true);
+      schedule(300);
+    } catch (e) {
+      var reason = e.message;
+      ejectBanner(function () { return t('ejectFailed', { drive: drive(), reason: reason }); }, false);
+    }
+    ejecting = null;
+    if (state) renderStorage(state.drives);
+    var again = document.querySelector('#storage .eject[data-mount="' + mount + '"]');
+    if (again && (!document.activeElement || document.activeElement === document.body)) again.focus();
   });
 }
 function makeCard(id) {
@@ -2150,12 +2219,21 @@ function moveInSeg(btn, key) {
     var sib = key === 'ArrowLeft' ? btn.previousElementSibling : btn.nextElementSibling;
     if (sib) sib.focus();
     else if (seg.id !== 'chips') moveInTop(btn, key);
+    else if (key === 'ArrowRight' && document.querySelector('#storage .eject')) document.querySelector('#storage .eject').focus();
   } else if (seg.id === 'chips') {
     if (key === 'ArrowDown' && cards().length) cards()[0].focus();
     if (key === 'ArrowUp') document.querySelector('.nav [aria-selected="true"]').focus();
   } else if (key === 'ArrowDown') {
     if ($('library').hidden) fields()[0].focus(); else focusChip();
   }
+}
+// The Unmount buttons on the drive pills, right of the filter chips.
+function moveInStorage(btn, key) {
+  var row = Array.prototype.slice.call(document.querySelectorAll('#storage .eject')), i = row.indexOf(btn);
+  if (key === 'ArrowRight' && row[i + 1]) row[i + 1].focus();
+  else if (key === 'ArrowLeft') { if (row[i - 1]) row[i - 1].focus(); else focusChip(); }
+  else if (key === 'ArrowDown' && cards().length) cards()[0].focus();
+  else if (key === 'ArrowUp') document.querySelector('.nav [aria-selected="true"]').focus();
 }
 // The top row: screen tabs, then Stop and GitHub.
 function moveInTop(t, key) {
@@ -2244,6 +2322,7 @@ document.addEventListener('keydown', function (e) {
   if (typing) return;
   if (t.classList.contains('card')) { e.preventDefault(); moveInGrid(t, k); }
   else if (t.classList.contains('seg-opt')) { e.preventDefault(); moveInSeg(t, k); }
+  else if (t.classList.contains('eject')) { e.preventDefault(); moveInStorage(t, k); }
   else if ((k === 'ArrowLeft' || k === 'ArrowRight') && t.parentNode.classList.contains('top-actions')) {
     e.preventDefault(); moveInTop(t, k);
   }
@@ -2264,7 +2343,7 @@ function renderAll() {
   applyStatic();
   fillLangSelect();
   setText($('logtoggle'), t(logOpen ? 'hideLog' : 'showLog'));
-  ['offline', 'lowspace', 'paused', 'smsg'].forEach(function (id) { if ($(id)._live) live($(id), $(id)._live); });
+  ['offline', 'lowspace', 'paused', 'smsg', 'eject'].forEach(function (id) { if ($(id)._live) live($(id), $(id)._live); });
   if (state) {
     var games = Array.isArray(state.games) ? state.games : [];
     renderChips(games);

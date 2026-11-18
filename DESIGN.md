@@ -37,6 +37,10 @@ Default scan roots: SMP `SM_DEFAULT_SCAN_PATHS_INITIALIZER` order, only for driv
 (`/data/homebrew`, `/data/etaHEN/games`, ext `homebrew`/`etaHEN/games`, usb `homebrew`, usb `etaHEN/games`,
 usb roots, ext roots). `scanpath=` lines in config replace them.
 A dir named `backports` in a scan root is never a game.
+Eject (`POST /api/eject`): `/mnt/usb0..7` and `/mnt/ext0` are ejectable (`/mnt/ext1` is the M.2 slot,
+SMP `sm_usb_mount_path`). The request goes to the system automounter over IPMI to `SceAutoMounterIpc`
+in `ps5/usb.c` (`km_usb_eject`, a port of SMP `sm_usb.c`), which checks the mount still has the
+source and fsid seen at request time; the payload never unmounts the drive itself.
 
 ## Settings (`src/config.rs`, file `/data/krakenmount/config.toml`)
 A flat TOML subset: `key = value` with strings, `true`/`false`, integers and arrays of strings; `#` comments.
@@ -267,6 +271,7 @@ pub fn drives() -> Vec<Drive>;
 pub fn drive_of(path: &std::path::Path) -> String;          // mount of the drive holding path ("/data", "/mnt/usb0")
 pub fn default_scan_roots() -> Vec<String>;
 pub fn mounted_aliases() -> Vec<String>;                    // mounted /mnt/usbN and /mnt/extN
+pub fn ejectable(mount: &str) -> bool;                      // /mnt/usb0..7, /mnt/ext0
 
 // scan.rs
 #[derive(Clone, Copy, PartialEq, Eq, Debug)] pub enum Packing { Plain, Zstd, Lz4 }
@@ -334,7 +339,7 @@ pub fn https_get(url: &str, max: usize) -> std::io::Result<Vec<u8>>;
 - `GET /api/state`:
   `{version, busy, paused, waiting:"kstuff"|"shadowmount"|null, running:[TID], games:[{title_id, title_name, version, path, kind:"pkg"|"folder", packing:"plain"|"zstd"|"lz4"|null,
   drive, size, status:"pending"|"checking"|"building"|"ready"|"error"|"duplicate", error, cache_size, cache_built, backport}],
-  drives:[{mount, label, kind, total, free}], cache:{path, size, free, low_space, ampr_present}, log:[last 100 lines of the last 64 KiB]}`
+  drives:[{mount, label, kind, total, free, ejectable}], cache:{path, size, free, low_space, ampr_present}, log:[last 100 lines of the last 64 KiB]}`
 - `GET /api/settings` -> settings JSON; `POST /api/settings` (JSON body) -> save, apply, rescan.
 - `GET /api/ampr` -> `{kind: "bundled"|"downloaded"|"hand"|"missing"|"error", version, updating}` of
   `ampr/libSceAmpr.sprx`; `POST /api/ampr/update` -> forced update, answered when done: 200 + result text,
@@ -356,6 +361,17 @@ pub fn https_get(url: &str, max: usize) -> std::io::Result<Vec<u8>>;
   fails, the cache and tile stay and the next pass remounts the title (a folder partly removed stays so).
   Then it uninstalls the home-screen entry (failure logged), removes the title from the launch set
   and its game row, wakes the scan loop, deletes the cache, and logs and optionally notifies.
+- `POST /api/eject`, body: the drive's mount path (`/mnt/usb0`) -> 204 once the path is no longer a
+  mount point; 400 when not ejectable, 404 when not mounted, 409 while the scan loop is in a pass
+  (try-lock of `State::work`, held to the end so no pass builds, registers or remounts meanwhile),
+  while a game runs, when another partition of the same disk (`/dev/daN` followed by the end, `p` or
+  `s`) is mounted, when a title mount from the drive cannot be unmounted (error text), or when the
+  drive changed (`km_usb_eject` ENOENT/ESTALE); 502 with errno and native status in hex when the
+  request fails, or when the mount is still there after 5 s (polled every 100 ms). Before the request it
+  unmounts, without force, every `/system_ex/app/<TID>` whose source (minus `<above>:`) is the drive
+  or under it; other mounts are left to the system (as SMP). Then it wakes the scan loop: the next
+  pass forgets the gone drive's games, or after a failure remounts the titles. Every outcome is
+  logged as `eject <path>: ...`.
 - `GET /icon/<TID>` icon0.png, `GET /pic/<TID>` pic0.png (or pic1.png): from the source's sce_sys, fallback
   `/user/appmeta/<TID>/`, then (pkg) from the .pkg itself via `cache::pkg_file`; 404 when none. Keyed by title id; the UI must re-request when the title id appears.
 - `GET /file/data/...` only with `debug=1`. `POST /api/quit`: loopback with an empty body (a newer copy

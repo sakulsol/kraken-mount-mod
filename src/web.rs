@@ -323,6 +323,7 @@ fn route(state: &State, head: &str, body: &[u8], loopback: bool) -> Reply {
         }
         ("POST", p) if p.starts_with("/api/rebuild/") => rebuild(state, &p["/api/rebuild/".len()..]),
         ("POST", p) if p.starts_with("/api/delete/") => delete(state, &p["/api/delete/".len()..], body),
+        ("POST", "/api/eject") => eject(state, body),
         ("POST", "/api/purge") => {
             log!("cache purge requested");
             state.purge.store(true, Ordering::SeqCst);
@@ -397,7 +398,8 @@ fn api_state(state: &State) -> Vec<u8> {
     let all = storage::drives();
     let drives: Vec<_> = all
         .iter()
-        .map(|d| serde_json::json!({"mount": d.mount, "label": d.label, "kind": d.kind, "total": d.total, "free": d.free}))
+        .map(|d| serde_json::json!({"mount": d.mount, "label": d.label, "kind": d.kind, "total": d.total, "free": d.free,
+            "ejectable": storage::ejectable(&d.mount)}))
         .collect();
     let free = all.iter().find(|d| d.mount == "/data").map_or(0, |d| d.free);
     let log = log_tail();
@@ -602,6 +604,165 @@ fn delete(state: &State, tid: &str, body: &[u8]) -> Reply {
         sys::notify(&crate::i18n::deleted(crate::i18n::lang(), &src.title_name));
     }
     no_content()
+}
+
+// Lives in ps5/usb.c (IPMI to SceAutoMounterIpc, SMP sm_usb.c port).
+extern "C" {
+    fn km_usb_eject(path: *const libc::c_char, source: *const libc::c_char, fsid: u64, native_status: *mut i32) -> i32;
+}
+
+/// (mount point, source, fsid) of every mount. getfsstat into our own buffer: ps5/compat.c's
+/// getmntinfo shares one static buffer with the launch watcher's thread.
+fn mount_table() -> std::io::Result<Vec<(String, String, u64)>> {
+    let mut extra = 8; // room for mounts added between the two calls
+    for _ in 0..4 {
+        let n = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+        if n < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut buf: Vec<libc::statfs> = vec![unsafe { std::mem::zeroed() }; n as usize + extra];
+        let bytes = (buf.len() * std::mem::size_of::<libc::statfs>()) as libc::c_long;
+        let n = unsafe { libc::getfsstat(buf.as_mut_ptr(), bytes, libc::MNT_NOWAIT) };
+        if n < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // A full buffer may be a cut table: the dependency checks need every mount.
+        if (n as usize) < buf.len() {
+            return Ok(buf[..n as usize].iter().map(mount_entry).collect());
+        }
+        extra *= 4;
+    }
+    Err(std::io::Error::other("the mount table kept growing"))
+}
+
+fn mount_entry(fs: &libc::statfs) -> (String, String, u64) {
+    // SMP sm_usb_filesystem_id: the 8-byte fsid as one u64.
+    let fsid = unsafe { std::mem::transmute::<libc::fsid_t, u64>(fs.f_fsid) };
+    // Bounded: a name that fills its field has no NUL.
+    (crate::launch::c_field(&fs.f_mntonname), crate::launch::c_field(&fs.f_mntfromname), fsid)
+}
+
+/// The mount exactly at `path`: Ok(None) when the path resolves to its parent FS (an unmounted
+/// /mnt/usbN reports /mnt) or is gone (ENOENT); any other statfs error is Err (SMP sm_usb_check_mount).
+fn mount_at(path: &str) -> std::io::Result<Option<(String, String, u64)>> {
+    let c = std::ffi::CString::new(path).map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+    let mut fs: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(c.as_ptr(), &mut fs) } != 0 {
+        let e = std::io::Error::last_os_error();
+        return if e.raw_os_error() == Some(libc::ENOENT) { Ok(None) } else { Err(e) };
+    }
+    Ok(Some(mount_entry(&fs)).filter(|m| m.0 == path))
+}
+
+/// SMP usb_disk_source_length: the length of "/dev/daN" when followed by the end, 'p' or 's'.
+fn disk_len(source: &str) -> usize {
+    let Some(rest) = source.strip_prefix("/dev/da") else { return 0 };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return 0;
+    }
+    match rest.as_bytes().get(digits) {
+        None | Some(b'p' | b's') => 7 + digits,
+        _ => 0,
+    }
+}
+
+/// POST /api/eject: unmounts our titles on the drive, then asks the system to eject it (SMP
+/// run_usb_eject_job). `work` is held throughout so the scan loop cannot remount meanwhile.
+fn eject(state: &State, body: &[u8]) -> Reply {
+    let path = String::from_utf8_lossy(body).into_owned();
+    if !storage::ejectable(&path) {
+        return reply(400, "text/plain", "not an ejectable drive");
+    }
+    let (source, fsid) = match mount_at(&path) {
+        Ok(Some((_, source, fsid))) => (source, fsid),
+        Ok(None) => return reply(404, "text/plain", "the drive is not mounted"),
+        Err(e) => {
+            log!("eject {path}: statfs: {e}");
+            return reply(500, "text/plain", format!("cannot read the drive: {e}"));
+        }
+    };
+    let Ok(work) = state.work.try_lock() else {
+        return reply(409, "text/plain", "a scan or build is in progress; try again in a moment");
+    };
+    if state.paused() {
+        return reply(409, "text/plain", "a game is running");
+    }
+    // ponytail: the drive's identity is taken now, not when the page was drawn; a drive swapped in
+    // between is ejected. Harmless: it is only an unmount.
+    // An unreadable table fails closed: the dependency checks below need it.
+    let mounts = match mount_table() {
+        Ok(m) => m,
+        Err(e) => {
+            log!("eject {path}: getfsstat: {e}");
+            return reply(500, "text/plain", format!("cannot read the mount table: {e}"));
+        }
+    };
+    let disk = disk_len(&source);
+    let other = mounts.iter().find(|(on, from, _)| {
+        *on != path && disk != 0 && disk_len(from) == disk && from[..disk] == source[..disk]
+    });
+    if let Some((on, from, _)) = other {
+        log!("eject {path}: another partition of the drive is mounted: {on} ({from})");
+        return reply(409, "text/plain", format!("another partition of this drive is mounted: {on}"));
+    }
+    let mut tids: Vec<&str> = mounts
+        .iter()
+        .filter_map(|(on, from, _)| {
+            let tid = on.strip_prefix("/system_ex/app/").filter(|t| crate::scan::valid_tid(t))?;
+            let from = from.strip_prefix("<above>:").unwrap_or(from);
+            (from == path || from.starts_with(&format!("{path}/"))).then_some(tid)
+        })
+        .collect();
+    tids.sort_unstable();
+    tids.dedup();
+    for tid in tids {
+        if let Err(e) = register::unmount_title(tid) {
+            log!("eject {path}: {tid}: unmount: {e}");
+            drop(work);
+            state.wake();
+            return reply(409, "text/plain", e.to_string());
+        }
+    }
+    // The launch watcher does not take `work`: a game may have started since the check above (SMP
+    // rechecks too). ponytail: a game starting between here and the IPMI call is not caught; its
+    // sandbox's /mnt/usbN alias then keeps the drive busy or goes with it.
+    let result = if state.paused() {
+        log!("eject {path}: a game started; not ejected");
+        reply(409, "text/plain", "a game is running")
+    } else {
+        eject_and_confirm(&path, &source, fsid)
+    };
+    drop(work);
+    // The next pass forgets the gone drive's games; on failure it remounts the titles unmounted above.
+    state.wake();
+    result
+}
+
+fn eject_and_confirm(path: &str, source: &str, fsid: u64) -> Reply {
+    let (Ok(cpath), Ok(csource)) = (std::ffi::CString::new(path), std::ffi::CString::new(source)) else {
+        return reply(400, "text/plain", "NUL in the path");
+    };
+    let mut native = 0i32;
+    let rc = unsafe { km_usb_eject(cpath.as_ptr(), csource.as_ptr(), fsid, &mut native) };
+    if rc == libc::ENOENT || rc == libc::ESTALE {
+        log!("eject {path}: the mount changed (errno {rc})");
+        return reply(409, "text/plain", "the drive changed; refresh and try again");
+    }
+    if rc != 0 {
+        log!("eject {path}: failed: errno {rc}, native status {:#010x}", native as u32);
+        return reply(502, "text/plain", format!("eject failed: errno {rc}, native status {:#010x}", native as u32));
+    }
+    for _ in 0..50 {
+        // Only a seen unmount counts; a statfs error keeps polling (SMP: unconfirmed).
+        if let Ok(None) = mount_at(path) {
+            log!("eject {path}: done ({source})");
+            return no_content();
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    log!("eject {path}: requested, but still mounted after 5 s");
+    reply(502, "text/plain", "unmount not confirmed; keep the drive connected and refresh")
 }
 
 /// The first of `names` in the source's sce_sys, else in /user/appmeta/<TID>/, else (a pkg) in the .pkg.

@@ -80,6 +80,12 @@ pub fn default_scan_roots() -> Vec<String> {
     all
 }
 
+/// USB drives and the USB extended storage (/mnt/ext0) can be ejected; /mnt/ext1 is the M.2 slot
+/// (SMP sm_usb_mount_path).
+pub fn ejectable(mount: &str) -> bool {
+    mount == "/mnt/ext0" || (0..USB).any(|i| mount == format!("/mnt/usb{i}"))
+}
+
 pub fn mounted_aliases() -> Vec<String> {
     (0..USB)
         .map(|i| format!("/mnt/usb{i}"))
