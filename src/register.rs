@@ -10,9 +10,9 @@ use std::ffi::{c_char, c_void, CStr, CString};
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::os::unix::fs::DirBuilderExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 const APP_BASE: &str = "/user/app";
 const SYSTEM_EX_APP: &str = "/system_ex/app";
@@ -372,6 +372,17 @@ pub fn uninstall(tid: &str) -> io::Result<()> {
     if rc == 0 { Ok(()) } else { Err(err(format!("sceAppInstUtilAppUnInstall({tid}): {rc:#x}"))) }
 }
 
+/// After an uninstall the title must count as unregistered: is_registered searches app.db as
+/// bytes, and a deleted row can survive in a free page. Removing the staged
+/// /user/app/<TID>/sce_sys/param.json makes it false, so a returning source registers in full.
+pub fn forget(tid: &str) {
+    let p = Path::new(APP_BASE).join(tid).join("sce_sys/param.json");
+    match fs::remove_file(&p) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => log!("{tid}: remove {}: {e}", p.display()),
+        _ => {}
+    }
+}
+
 /// sceAppInstUtilAppInstallTitleDir(tid, "/user/app/", NULL); 0 and 0x80990002 are success.
 fn install_title_dir(title_id: &str) -> io::Result<()> {
     let f = match INSTALL_FN.get_or_init(resolve_install) {
@@ -416,12 +427,81 @@ fn register_inner(title_id: &str, app0: &Path, sce_sys: &Path, backport: Option<
     ctx(copy_appmeta(title_id, sce_sys, &appmeta), || format!("appmeta -> {}", appmeta.display()))?;
     ctx(update_trophy_metadata(title_id, sce_sys), || "trophy metadata".into())?;
     mount_inner(title_id, app0, backport, false)?;
-    install_title_dir(title_id)
+    install_title_dir(title_id)?;
+    // ponytail: SMP's fixed 200 ms (sm_install.c) for the install's app.db row to land; a row
+    // not there yet is caught by the next run's already-registered pass or the next game exit.
+    spawn_snd0info(title_id, 200);
+    Ok(())
+}
+
+/// `set_snd0info` on its own thread after `delay_ms`, so a busy app.db (up to 3 s) does not hold
+/// the caller (scan thread, launch watcher); APP_DB_LOCK still serializes the writes.
+pub fn spawn_snd0info(title_id: &str, delay_ms: u64) {
+    let tid = title_id.to_string();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        set_snd0info(&tid);
+    });
+}
+
+/// Ok when the home-screen title looks like one Kraken Mount staged; Err(path) when the path
+/// shows a real install: /user/app/<TID>/app.pkg, a copy on an M.2 drive
+/// (/mnt/ext{0,1}/user/app/<TID>), or no /user/app/<TID>/sce_sys/param.json (we write one).
+/// ponytail: a layout heuristic, not an app.db lookup; an install laid out like ours reads as ours.
+pub fn is_ours(title_id: &str) -> Result<(), PathBuf> {
+    is_ours_in(Path::new("/"), title_id)
+}
+
+/// `is_ours` under `root` (a fake tree in tests).
+fn is_ours_in(root: &Path, title_id: &str) -> Result<(), PathBuf> {
+    let app = root.join("user/app").join(title_id);
+    for p in [app.join("app.pkg"), root.join("mnt/ext0/user/app").join(title_id),
+        root.join("mnt/ext1/user/app").join(title_id)]
+    {
+        // Only ENOENT/ENOTDIR is "absent": a stat error (a drive that answers badly) protects.
+        if !matches!(fs::symlink_metadata(&p), Err(e) if matches!(e.raw_os_error(), Some(libc::ENOENT | libc::ENOTDIR))) {
+            return Err(p);
+        }
+    }
+    if !app.join("sce_sys/param.json").is_file() {
+        return Err(app);
+    }
+    Ok(())
+}
+
+extern "C" {
+    /// ps5/appdb.c: one statement with ?1 = `arg`; rows changed, or -1 with the error in `err`.
+    fn km_sqlite_exec1(path: *const c_char, sql: *const c_char, arg: *const c_char, err: *mut c_char, errlen: usize) -> i32;
+}
+
+/// The scan thread and the launch watcher both write app.db.
+static APP_DB_LOCK: Mutex<()> = Mutex::new(());
+
+/// SMP update_snd0info (sm_appdb.c): point app.db's snd0info at /user/appmeta/<TID>/snd0.at9 so
+/// the home screen plays the title sound. Only when that file exists; errors are logged only.
+pub fn set_snd0info(title_id: &str) {
+    if !Path::new(APPMETA_BASE).join(title_id).join("snd0.at9").is_file() {
+        return;
+    }
+    const SQL: &str = "UPDATE tbl_contentinfo SET snd0info = '/user/appmeta/' || ?1 || '/snd0.at9' \
+        WHERE titleId = ?1 AND snd0info IS NOT '/user/appmeta/' || ?1 || '/snd0.at9'";
+    let (Ok(path), Ok(sql), Ok(tid)) = (CString::new(APP_DB), CString::new(SQL), CString::new(title_id)) else {
+        return;
+    };
+    let mut msg = [0 as c_char; 256];
+    let _guard = APP_DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let rows = unsafe { km_sqlite_exec1(path.as_ptr(), sql.as_ptr(), tid.as_ptr(), msg.as_mut_ptr(), msg.len()) };
+    if rows > 0 {
+        log!("{title_id}: snd0info set ({rows} row(s))");
+    } else if rows < 0 {
+        let e = unsafe { CStr::from_ptr(msg.as_ptr()) }.to_string_lossy();
+        log!("{title_id}: snd0info update in {APP_DB} failed: {e}");
+    }
 }
 
 /// True when the title is on the home screen already: /user/app/<TID>/sce_sys/param.json,
 /// /user/appmeta/<TID>/param.json, and the title id in app.db (SMP checks app.db + is_installed).
-/// ponytail: app.db is searched for the TID bytes, no sqlite; a deleted row still in a free page
+/// ponytail: app.db is searched for the TID bytes, no SELECT; a deleted row still in a free page
 /// reads as registered (a rebuild re-registers). Unreadable app.db = not registered.
 pub fn is_registered(title_id: &str) -> bool {
     if !Path::new(APP_BASE).join(title_id).join("sce_sys/param.json").is_file()

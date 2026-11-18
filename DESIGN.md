@@ -6,6 +6,11 @@ launch, overlays the game's fakelib and the shared ampr-emu-ng dir on the sandbo
 The ampr-emu-ng runtime is NOT built here: its released `libSceAmpr.sprx` is bundled from
 `vendor/ampr-emu-ng/` (`VERSION`, `SHA256SUMS` from the GitHub release, checked by `ps5/build.sh`)
 and installed into `/data/krakenmount/ampr/` at start.
+Two third-party emulators are bundled the same way (released files, `VERSION` and `SHA256SUMS` from
+their GitHub releases, checked by `ps5/build.sh`; GPL-3.0, `THIRD_PARTY_NOTICES`): drakmor's dlc_emu
+(`vendor/dlc_emu/`: `libSceAppContent.sprx`, `libSceNpEntitlementAccess.sprx`, `libSceGameUpdate.sprx`)
+and pgo_stub (`vendor/pgo_stub/`: `libScePlayGo.sprx`). They are embedded in the payload and written
+only into a cache's `fakelib/`, never into `/data/krakenmount/ampr/`.
 `crates/kraken-mount-pkg` reads debug FPKGs (the reader plus its Kraken block decoder, module `decoder`).
 
 ## Supported sources (nothing else)
@@ -38,11 +43,15 @@ A flat TOML subset: `key = value` with strings, `true`/`false`, integers and arr
 | Key | Default | Meaning |
 |---|---|---|
 | `scanpath` | (defaults above) | array of paths; replaces the default scan roots |
-| `inject_ampr` | true | copy `/data/krakenmount/ampr/*` on top of every game's fakelib (a change only refreshes `fakelib/`) |
+| `inject_ampr` | true | copy `/data/krakenmount/ampr/*` on top of a folder game's fakelib; pkg games always get it (pkg mode exists only in ampr-emu-ng) (a change only refreshes `fakelib/`) |
+| `add_emulators` | true | add the bundled DLC (dlc_emu) and PlayGo (pgo_stub) emulators to a game's fakelib when it needs them and ships none (a change only refreshes `fakelib/`) |
 | `ampr_auto_update` | true | once per start, download a newer ampr-emu-ng release from GitHub (a hand-placed `libSceAmpr.sprx` is kept) |
 | `backports` | true | apply `<scan root>/backports/<TID>*` |
 | `scan_interval_seconds` | 10 | scan loop period (1..3600) |
+| `stability_wait_seconds` | 10 | skip a source changed less than this many seconds ago (still being copied) (0..3600, 0 = off) |
 | `low_space_gb` | 20 | warn when `/data` free space is below this |
+| `auto_remove_missing` | true | remove a title from the home screen when its source stays missing for `auto_remove_delay_seconds` (the cache stays; see Flow) |
+| `auto_remove_delay_seconds` | 300 | how long a source must stay missing before `auto_remove_missing` removes its title (1..86400) |
 | `notify` | true | system toasts |
 | `log` | true | write `/data/krakenmount/kraken.log` (stdout always gets the lines) |
 | `debug` | false | klog capture to `/data/krakenmount/klog.txt` and the `/file/data/...` route |
@@ -54,7 +63,8 @@ Invalid values are logged and replaced by the default. The web UI edits the same
 - Folder: `fakelib/` only. `/app0` is the game folder itself.
 - FPKG: it IS `/app0`: `sce_sys/**` (with the files only the pkg container holds: `save_data.png`,
   `pic0`/`pic1`, `snd0.at9`, `trophy00.ucp`, `nptitle.dat`, `npbind.dat`, which save data and
-  trophies read from `/app0/sce_sys`), `eboot.bin`, every `*.prx`/`*.sprx` extracted (0777),
+  trophies read from `/app0/sce_sys`), `eboot.bin`, every `*.prx`/`*.sprx`, and a root-level `dlc_emu.ini` / `playgo_stub.dat` (the emulators
+  open `/app0/<name>`; an older cache lacks them loose, ng still serves them from the pkg) extracted (0777),
   `fakelib/`, `kraken/` (mount point for the pkg's folder, see Launch), `kraken.image` (one line, no
   newline: `kraken/<pkg file name>`, relative to `/app0`, the file ng opens; missing means stale), `ampr_emu.index` +
   `ampr_assets.index` (`src/ampr_index.rs`; every non-extracted file packed, fakelib and
@@ -73,13 +83,34 @@ Invalid values are logged and replaced by the default. The web UI edits the same
   paths (a dir only once empty), so files the game wrote stay. A failed build removes what it wrote.
   A cache without `.built` (older build) is emptied. Only Purge deletes the game's files.
 - `fakelib/` composition: base = backport `fakelib/` (all files) if present, else the game's
-  `fakelib/` (all files; the old `game_fakelib` setting is gone and ignored in `config.toml`);
-  `libkernel.sprx` always dropped. `fakelib2/` (SMP) wins
-  over `fakelib/` and is used as-is; it is never indexed or copied as game files. All files 0777.
-  Then, with `inject_ampr`, every file of `/data/krakenmount/ampr/` (not `libkernel.sprx`) is copied on top,
-  so ours wins over the game's own `libSceAmpr.sprx`. `.ampr` records what was copied (name, size,
-  mtime); when the ampr dir or `inject_ampr` changes, or `.done` still has a `game_fakelib` other
-  than `full` (a cache built before the setting was removed), `check` says `Fakelib` and only `fakelib/` is
+  `fakelib/` (all files but `libSceSaveData.native.sprx`, which breaks saves; the old `game_fakelib`
+  setting is gone and ignored in `config.toml`); `libkernel.sprx` always dropped. A backport's lib dir
+  keeps `libSceSaveData.native.sprx` (a backport is deliberate). `fakelib2/` (SMP) wins
+  over `fakelib/` and is used as-is (it keeps `libSceSaveData.native.sprx` too); it is never indexed or copied as game files. All files 0777.
+  Then, with `add_emulators`, each bundled emulator the game needs is added when `fakelib/` has no file of
+  that name (case-insensitive). A file of that name that is a known older release (dlc_emu 0.1a or 0.2, pgo_stub 0.4
+  or 0.5, matched by size and crc32, both builds of each) is replaced by the bundled one, whether or not the game
+  needs it, logged `<TID>: fakelib: upgraded <name> (<project> <version>)`; any other copy (custom, the bundled
+  release, a log build) is kept, so the game's or backport's own copy wins and nothing is downgraded: the dlc_emu set
+  (its 3 files, each only if missing) when `dlc_emu.ini` (exact name, as dlc_emu opens it) is at the folder game's root, the backport's root or
+  the pkg's root; `libScePlayGo.sprx` when `eboot.bin` (the backport's if it has one, else the game's; pkg:
+  the extracted copy) contains the string `libScePlayGo` (an import; an encrypted eboot or an import only in
+  another prx is missed). Each add logs `<TID>: fakelib: added <name> (<project> <version>)`.
+  The dlc_emu set is all-or-nothing: when any of its 3 files is a copy that is neither a known older release nor the bundled file, none of the 3
+  is added or upgraded (no mixed set), logged `<TID>: fakelib: kept the game's dlc_emu files (not a known release)`; pgo_stub goes per file.
+  Then, with `inject_ampr` and always for a pkg game (the package's own `libSceAmpr.sprx` cannot read the
+  `.pkg` named in `kraken.image`), every file of `/data/krakenmount/ampr/` (not `libkernel.sprx`) is copied on top,
+  so ours wins over the game's own `libSceAmpr.sprx`, except a game's or backport's ampr-emu-ng strictly newer than
+  ours (the `ampr-emu-ng X.Y.Z` identity in both files; ours without one counts as older), which is kept and logged
+  `<TID>: fakelib: kept the game's ampr-emu-ng <v> (newer than <v>)` (no ng downgrade, also over a hand-placed copy). `.ampr` records what fakelib was composed from: `{"ampr": {name: [size, mtime]} or null,
+  "emus": null without `add_emulators`, else the dlc_emu and pgo_stub versions, whether a `dlc_emu.ini` is on
+  disk (folder or backport root) and the eboot's [size, mtime], "playgo": [eboot size, mtime secs, imports PlayGo]}`
+  (a pkg's own `dlc_emu.ini` is not in it, a pkg change rebuilds through the stamp). "playgo" memoizes the PlayGo
+  import search: `eboot.bin` is read again only when its (size, mtime) differs (a read error is not memoized), and
+  `check` never compares it. An older `.ampr` without `emus` differs, so every cache refreshes `fakelib/` once; that
+  one-time refresh also drops a `libSceSaveData.native.sprx` an older build copied (no separate check for such files).
+  When "ampr" or "emus" differ (the ampr dir, `inject_ampr` or the emulator inputs changed) or `.done` still has a
+  `game_fakelib` other than `full` (a cache built before the setting was removed), `check` says `Fakelib` and only `fakelib/` is
   recomposed (`refresh_fakelib`, which then rewrites `.done` with its own mtime), no extraction or re-registration. `fakelib/` is not in the AMPR index.
 - A folder game's cache is only `fakelib/`, `.ampr`, `.built`, `.done`: nothing of the game is copied.
 - Fresh when `.done` exists, its JSON stamp equals the expected one
@@ -135,7 +166,25 @@ A moved game (`Fresh::Moved`, not forced): a folder's `/system_ex/app/<TID>` sta
 new folder first (`register::remount`, backport unionfs included, never MNT_FORCE), then
 `cache::relink`; logged with the title id and both paths, toast `i18n::moved`; then the usual
 fresh path. A failed relink or remount falls back to a rebuild.
-Auto-update (ampr-emu-ng): at start, when `ampr_auto_update` and `inject_ampr` are on, a background thread asks
+Stability (`stability_wait_seconds`, SMP sm_stability.c): a source whose youngest max(mtime, ctime) is
+under the wait is still being copied (a pkg: the file; a folder: the folder, `sce_sys/`,
+`sce_sys/param.json` and `eboot.bin` only) and is skipped this pass (`ScanResult::unstable`, logged once until stable): not gone, so its entry,
+registration and cache stay, and a new one shows up once it is stable. A Purge waits until no
+source is being copied (purge empties kept caches, and an unstable one would not rebuild that pass). A clock in the future counts as stable.
+An unstable source reserves its title id for duplicate detection (a pkg: the title id of an earlier cache of that path; a
+folder: its `param.json`, else that cache), so a copy in flight that would win keeps the other copy out (an unstable loser reserves nothing).
+Auto-remove (`auto_remove_missing`, SMP auto_remove_missing_games): after each full scan pass (timers
+start only after the first one, so a drive mounted late is not missing; not while paused), a built cache
+(`.done`) whose stamp source is gone (ENOENT/ENOTDIR only) starts a timer in memory (a restart starts over).
+Excluded, timer reset: a title this scan lists (moved, or still being copied), a running one, one with DLC in
+`/user/addcont/<TID>` (a stat error there protects too). Missing for `auto_remove_delay_seconds`: unregister
+as `/api/delete` (each title rechecks that no game runs; unmount without force, a busy mount retried next pass;
+uninstall, then `register::forget` so a returning source registers in full: `is_registered` reads app.db as bytes); the cache stays for a
+return; a failed uninstall is logged once and not retried until the source returns or a restart.
+A title with an installed copy (`/user/app/<TID>/app.pkg` or `/mnt/ext{0,1}/user/app/<TID>`; a stat error other than
+ENOENT/ENOTDIR counts as one) or no staged `/user/app/<TID>/sce_sys/param.json` is never removed (`register::is_ours`,
+rechecked every pass, logged once per run).
+Auto-update (ampr-emu-ng): at start, when `ampr_auto_update` is on (whatever `inject_ampr` says: pkg games always use the ampr dir), a background thread asks
 `https://api.github.com/repos/quer3q/ampr-emu-ng/releases/latest` (stable releases only; betas are
 pre-releases and skipped). When its `tag_name` is newer than the installed version, it downloads the
 asset `libSceAmpr.sprx` (size must equal the asset size, max 16 MiB, ELF or SELF magic), writes a temp
@@ -175,6 +224,14 @@ overwritten (SMP), but get +0444 when a read bit is missing.
 `/system_ex` is read-only unless etaHEN, SMP or kstuff-lite remounted it (elfldr does not): when
 `mkdir -p /system_ex/app/<TID>` fails with EROFS, register remounts it once like SMP `remount_system_ex`
 (`nmount` MNT_UPDATE of `/dev/ssd0.system_ex`) and retries. An existing title dir (EEXIST) needs no remount.
+Title sound (`set_snd0info`, SMP `update_snd0info`): when `/user/appmeta/<TID>/snd0.at9` exists,
+`UPDATE tbl_contentinfo SET snd0info = '/user/appmeta/<TID>/snd0.at9' WHERE titleId = <TID>` (rows
+already pointing there are skipped) in `/system_data/priv/mms/app.db`, through `ps5/appdb.c` and the
+SQLite 3.46.1 amalgamation (opened read-write, never created, busy timeout 3 s, one mutex for both
+threads). Run 200 ms after a successful install call, once per run for a title already registered
+(backfills older registrations), and after each game exit (the system rewrites the path); each runs on its own thread
+(`spawn_snd0info`, the post-install one after the 200 ms), so a busy app.db (up to 3 s) holds neither the scan nor the watcher. Logged
+`<TID>: snd0info set (<n> row(s))` only when a row changed; a failure is logged, never fatal.
 
 ## Launch (`src/launch.rs`)
 As before (SMP sm_fakelib port): unionfs of `caches/<TID>/fakelib` (when non-empty) over the sandbox's
@@ -185,7 +242,7 @@ mount of the ampr dir. Also nullfs of `/data` at `<sandbox>/data`, plus a nullfs
 registered stack, backport unionfs included) over it; for a pkg game, a nullfs of the pkg's folder
 (from the `.done` stamp's "source") at `<sandbox>/app0/kraken`; ng opens the .pkg named in `/app0/kraken.image`.
 A single-file nullfs of the .pkg is refused by the kernel (ENOTDIR), hence the folder mount.
-All removed on exit, newest first.
+All removed on exit, newest first. When a session's cleanup ends, `register::spawn_snd0info(<TID>, 0)` (own thread).
 No overlay when neither layer applies.
 
 ## Module interfaces (contract between modules; keep these names)
@@ -193,8 +250,10 @@ No overlay when neither layer applies.
 // config.rs
 pub const CONFIG_PATH: &str = "/data/krakenmount/config.toml";
 #[derive(Clone, PartialEq, Debug)]
-pub struct Settings { pub scan_paths: Vec<String>, pub inject_ampr: bool, pub ampr_auto_update: bool,
-  pub backports: bool, pub scan_interval_secs: u64, pub low_space_gb: u64, pub notify: bool, pub log: bool, pub debug: bool }
+pub struct Settings { pub scan_paths: Vec<String>, pub inject_ampr: bool, pub add_emulators: bool,
+  pub ampr_auto_update: bool,
+  pub backports: bool, pub scan_interval_secs: u64, pub stability_wait_secs: u64, pub low_space_gb: u64,
+  pub auto_remove_missing: bool, pub auto_remove_delay_secs: u64, pub notify: bool, pub log: bool, pub debug: bool }
 impl Default for Settings
 pub fn load() -> Settings;                       // creates the file with defaults when missing
 pub fn save(s: &Settings) -> std::io::Result<()>;
@@ -216,8 +275,10 @@ pub fn mounted_aliases() -> Vec<String>;                    // mounted /mnt/usbN
 pub struct Source { pub path: std::path::PathBuf, pub kind: Kind, pub title_id: String, pub title_name: String,
   pub version: String, /* param.json contentVersion, or empty */
   pub drive: String, pub size: u64 /* pkg file size; folder: 0 */, pub backport: Option<std::path::PathBuf> }
-pub struct ScanResult { pub games: Vec<Source>, pub duplicates: Vec<Source>, pub errors: Vec<(std::path::PathBuf, String)> }
-pub fn scan(roots: &[String], backports: bool) -> ScanResult;  // memoizes pkg param reads by (path, size, mtime)
+pub struct ScanResult { pub games: Vec<Source>, pub duplicates: Vec<Source>, pub errors: Vec<(std::path::PathBuf, String)>,
+  pub unstable: Vec<(std::path::PathBuf, Option<String> /* title id when known */)> } // still being copied: skipped, not gone
+pub fn scan(roots: &[String], backports: bool, stability_wait: u64) -> ScanResult;  // memoizes pkg param reads by (path, size, mtime)
+pub fn still_written(paths: &[std::path::PathBuf], wait: u64) -> Option<u64>; // age in s of the youngest max(mtime, ctime) under wait; None = stable
 pub fn parse_param(json: &[u8]) -> std::io::Result<(String, String, String)>; // (title_id, title_name, version)
 pub fn valid_tid(t: &str) -> bool;
 
@@ -246,10 +307,18 @@ pub fn fix_access(src: &Source);                                    // add missi
 pub fn register(title_id: &str, app0: &std::path::Path, sce_sys: &std::path::Path, backport: Option<&std::path::Path>) -> std::io::Result<()>;
 pub fn register_tile(port: u16);
 pub fn is_registered(title_id: &str) -> bool;
+pub fn set_snd0info(title_id: &str);                      // app.db snd0info -> /user/appmeta/<TID>/snd0.at9; logs, never fails
+pub fn spawn_snd0info(title_id: &str, delay_ms: u64);    // set_snd0info on its own thread after delay_ms
 pub fn mount(title_id: &str, app0: &std::path::Path, backport: Option<&std::path::Path>) -> std::io::Result<()>;
 pub fn remount(title_id: &str, app0: &std::path::Path, backport: Option<&std::path::Path>) -> std::io::Result<()>; // moved folder: whole stack
 pub fn unmount_title(tid: &str) -> std::io::Result<()>;   // every layer at /system_ex/app/<TID>, never MNT_FORCE
 pub fn uninstall(tid: &str) -> std::io::Result<()>;       // sceAppInstUtilAppUnInstall
+pub fn forget(tid: &str);                                 // after an auto-remove: drop the staged sce_sys/param.json so is_registered is false
+pub fn is_ours(title_id: &str) -> Result<(), std::path::PathBuf>; // Err(path) = an installed copy, or no staged param.json: never auto-remove
+
+// main.rs (shared version compare, used by cache.rs for ampr-emu-ng identities)
+pub(crate) fn parse_version(v: &str) -> Option<(u32, u32, u32)>; // "X.Y.Z", leading "v" allowed
+pub(crate) fn newer(a: Option<&str>, b: Option<&str>) -> bool;   // a strictly newer than b; an unknown version is older than any
 
 // launch.rs (titles: overlay these; running: title ids with a live session, kept by the watcher)
 pub fn watch(titles: Arc<Mutex<HashSet<String>>>, running: Arc<Mutex<HashSet<String>>>);

@@ -868,7 +868,11 @@ impl Watcher {
             }
         }
         for name in done {
-            self.sessions.remove(&name);
+            if let Some(s) = self.sessions.remove(&name) {
+                // SMP sm_game_lifecycle.c: the system rewrites snd0info while a title runs.
+                // On its own thread: a busy app.db must not hold the watcher up to 3 s.
+                crate::register::spawn_snd0info(&s.tid, 0);
+            }
         }
     }
 }

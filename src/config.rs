@@ -8,10 +8,16 @@ pub const CONFIG_PATH: &str = "/data/krakenmount/config.toml";
 pub struct Settings {
     pub scan_paths: Vec<String>,
     pub inject_ampr: bool,
+    pub add_emulators: bool,
     pub ampr_auto_update: bool,
     pub backports: bool,
     pub scan_interval_secs: u64,
+    /// A source changed less than this many seconds ago is still being copied (0 = off).
+    pub stability_wait_secs: u64,
     pub low_space_gb: u64,
+    /// SMP auto_remove_missing_games: unregister a title whose source is gone this long.
+    pub auto_remove_missing: bool,
+    pub auto_remove_delay_secs: u64,
     pub notify: bool,
     /// Write /data/krakenmount/kraken.log (the payload's stdout always gets the lines).
     pub log: bool,
@@ -23,10 +29,14 @@ impl Default for Settings {
         Settings {
             scan_paths: Vec::new(),
             inject_ampr: true,
+            add_emulators: true,
             ampr_auto_update: true,
             backports: true,
             scan_interval_secs: 10,
+            stability_wait_secs: 10,
             low_space_gb: 20,
+            auto_remove_missing: true,
+            auto_remove_delay_secs: 300,
             notify: true,
             log: true,
             debug: false,
@@ -37,11 +47,15 @@ impl Default for Settings {
 
 const HELP: &[(&str, &str)] = &[
     ("scanpath", "replaces the default scan roots (/data/homebrew, /data/etaHEN/games, <drive>/homebrew, ...)"),
-    ("inject_ampr", "true = copy /data/krakenmount/ampr/* on top of every game's fakelib (a change only refreshes fakelib/)"),
+    ("inject_ampr", "true = copy /data/krakenmount/ampr/* on top of a folder game's fakelib (pkg games always get it; a change only refreshes fakelib/)"),
+    ("add_emulators", "true = add the bundled DLC (dlc_emu) and PlayGo (pgo_stub) emulators to a game's fakelib when it needs them and ships none (a change only refreshes fakelib/)"),
     ("ampr_auto_update", "true = once per start, download a newer ampr-emu-ng release from GitHub (a hand-placed libSceAmpr.sprx is kept)"),
     ("backports", "true = apply backports/<TID>* from the game's scan root, then the other roots, then /data/homebrew"),
     ("scan_interval_seconds", "scan loop period, 1..3600"),
+    ("stability_wait_seconds", "skip a source changed less than this many seconds ago (still being copied), 0..3600, 0 = off"),
     ("low_space_gb", "warn when /data free space is below this"),
+    ("auto_remove_missing", "true = remove a title from the home screen when its source is missing for auto_remove_delay_seconds (the cache stays; not while a game runs, not with DLC in /user/addcont/<TID>)"),
+    ("auto_remove_delay_seconds", "how long a source must stay missing before auto_remove_missing removes its title, 1..86400"),
     ("notify", "true = system toasts"),
     ("log", "true = write /data/krakenmount/kraken.log (starts over past 1 MiB)"),
     ("debug", "true = klog capture to /data/krakenmount/klog.txt and the /file/data/... route"),
@@ -72,6 +86,7 @@ fn set(s: &mut Settings, key: &str, v: &str) -> Result<(), String> {
         }
         "scanpath" => return Err(format!("expected an absolute path, got {v:?}")),
         "inject_ampr" => s.inject_ampr = flag(v)?,
+        "add_emulators" => s.add_emulators = flag(v)?,
         "ampr_auto_update" => s.ampr_auto_update = flag(v)?,
         // Removed setting (the game's fakelib is always used in full): ignored, dropped on the next save.
         "game_fakelib" => {}
@@ -80,7 +95,16 @@ fn set(s: &mut Settings, key: &str, v: &str) -> Result<(), String> {
             n @ 1..=3600 => s.scan_interval_secs = n,
             n => return Err(format!("{n} not in 1..3600")),
         },
+        "stability_wait_seconds" => match num(v)? {
+            n @ 0..=3600 => s.stability_wait_secs = n,
+            n => return Err(format!("{n} not in 0..3600")),
+        },
         "low_space_gb" => s.low_space_gb = num(v)?,
+        "auto_remove_missing" => s.auto_remove_missing = flag(v)?,
+        "auto_remove_delay_seconds" => match num(v)? {
+            n @ 1..=86400 => s.auto_remove_delay_secs = n,
+            n => return Err(format!("{n} not in 1..86400")),
+        },
         "notify" => s.notify = flag(v)?,
         "log" => s.log = flag(v)?,
         "debug" => s.debug = flag(v)?,
@@ -231,10 +255,14 @@ fn render(s: &Settings) -> String {
                 out += &format!("scanpath = [{}]\n", items.join(", "));
             }
             "inject_ampr" => out += &format!("{k} = {}\n", s.inject_ampr),
+            "add_emulators" => out += &format!("{k} = {}\n", s.add_emulators),
             "ampr_auto_update" => out += &format!("{k} = {}\n", s.ampr_auto_update),
             "backports" => out += &format!("{k} = {}\n", s.backports),
             "scan_interval_seconds" => out += &format!("{k} = {}\n", s.scan_interval_secs),
+            "stability_wait_seconds" => out += &format!("{k} = {}\n", s.stability_wait_secs),
             "low_space_gb" => out += &format!("{k} = {}\n", s.low_space_gb),
+            "auto_remove_missing" => out += &format!("{k} = {}\n", s.auto_remove_missing),
+            "auto_remove_delay_seconds" => out += &format!("{k} = {}\n", s.auto_remove_delay_secs),
             "notify" => out += &format!("{k} = {}\n", s.notify),
             "log" => out += &format!("{k} = {}\n", s.log),
             _ => out += &format!("{k} = {}\n", s.debug),
@@ -276,10 +304,14 @@ pub fn to_json(s: &Settings) -> Value {
     json!({
         "scanpath": s.scan_paths,
         "inject_ampr": s.inject_ampr,
+        "add_emulators": s.add_emulators,
         "ampr_auto_update": s.ampr_auto_update,
         "backports": s.backports,
         "scan_interval_seconds": s.scan_interval_secs,
+        "stability_wait_seconds": s.stability_wait_secs,
         "low_space_gb": s.low_space_gb,
+        "auto_remove_missing": s.auto_remove_missing,
+        "auto_remove_delay_seconds": s.auto_remove_delay_secs,
         "notify": s.notify,
         "log": s.log,
         "debug": s.debug,

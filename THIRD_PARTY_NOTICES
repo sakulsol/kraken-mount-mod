@@ -4,12 +4,21 @@ Kraken Mount is GPL-3.0-or-later (LICENSE). The ELF also contains code under the
 below, whose terms require these notices to accompany binary distributions.
 
 - ps5/shim/getpeereid.c, ps5/shim/lockf.c: BSD-2-Clause.
+- dlc_emu 0.3 by drakmor (vendor/dlc_emu: libSceAppContent.sprx,
+  libSceNpEntitlementAccess.sprx, libSceGameUpdate.sprx), the released binaries, embedded and
+  written into game caches: GPL-3.0 (Kraken Mount's license, text in LICENSE).
+  Corresponding Source: https://github.com/drakmor/dlc_emu/tree/0.3
+- pgo_stub 0.6 by drakmor (vendor/pgo_stub: libScePlayGo.sprx), the released binary, embedded
+  and written into game caches: GPL-3.0 (Kraken Mount's license, text in LICENSE).
+  Corresponding Source: https://github.com/drakmor/pgo_stub/tree/0.6
 - Rust crates linked into the payload (Cargo.lock), each used under its MIT option: itoa,
   libc, memchr, serde_core, serde_json, zmij.
 - The Rust 1.99.0 standard library (core, alloc, std), built with -Z build-std: MIT OR
   Apache-2.0, used under MIT. See https://github.com/rust-lang/rust/blob/1.99.0/COPYRIGHT.
 - Crates the standard library pulls in (library/Cargo.lock), each used under its MIT option:
   cfg-if 1.0.4, hashbrown 0.17.1, rustc-demangle 0.1.28.
+- SQLite 3.46.1 (the amalgamation, ps5/appdb.c): public domain, no license text required. See
+  https://www.sqlite.org/copyright.html.
 - compiler_builtins 0.1.160 (part of the standard library build): MIT AND Apache-2.0 WITH
   LLVM-exception; its full license text is at the end of this file.
 

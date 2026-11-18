@@ -437,11 +437,15 @@ button:disabled { opacity: 0.5; cursor: default; }
     <label class="row col"><span class="lbl" data-i18n="scanPaths">Scan paths</span>
       <span class="hint" data-i18n="scanPathsHint">One per line. Empty = default roots (/data/homebrew, /data/etaHEN/games, each drive's homebrew, etaHEN/games and root).</span>
       <textarea id="f_scanpath" spellcheck="false"></textarea></label>
-    <label class="row"><span class="lbl" data-i18n="injectAmpr">Inject ampr-emu-ng into every game's fakelib</span><input type="checkbox" id="f_inject_ampr"></label>
+    <label class="row"><span class="lbl" data-i18n="addEmulators">Add the bundled DLC (dlc_emu) and PlayGo (pgo_stub) emulators when a game needs them and has none</span><input type="checkbox" id="f_add_emulators"></label>
+    <label class="row"><span class="lbl" data-i18n="injectAmpr">Inject ampr-emu-ng into folder games' fakelib (pkg games always get it)</span><input type="checkbox" id="f_inject_ampr"></label>
     <label class="row"><span class="lbl" data-i18n="amprAutoUpdate">Auto-update ampr-emu-ng (checked once at start)</span><input type="checkbox" id="f_ampr_auto_update"></label>
     <div class="row"><span><span class="lbl" id="amprstatus">ampr-emu-ng</span><span class="hint" id="amprmsg"></span></span><button id="amprupdate" type="button" data-i18n="amprUpdateNow">Update ampr-emu-ng now</button></div>
     <label class="row"><span class="lbl" data-i18n="backports">Apply backports</span><input type="checkbox" id="f_backports"></label>
     <label class="row"><span class="lbl" data-i18n="scanInterval">Scan interval, seconds (1-3600)</span><input type="number" id="f_scan_interval_seconds" min="1" max="3600"></label>
+    <label class="row"><span class="lbl" data-i18n="stabilityWait">Wait for a copy to finish, seconds (0-3600, 0 = off)</span><input type="number" id="f_stability_wait_seconds" min="0" max="3600"></label>
+    <label class="row"><span class="lbl" data-i18n="autoRemoveMissing">Remove a game from the home screen when its source is missing</span><input type="checkbox" id="f_auto_remove_missing"></label>
+    <label class="row"><span class="lbl" data-i18n="autoRemoveDelay">Remove after missing for, seconds (1-86400)</span><input type="number" id="f_auto_remove_delay_seconds" min="1" max="86400"></label>
     <label class="row"><span class="lbl" data-i18n="lowSpaceGb">Low space warning, GB</span><input type="number" id="f_low_space_gb" min="0"></label>
     <label class="row"><span class="lbl" data-i18n="notify">System notifications</span><input type="checkbox" id="f_notify"></label>
     <label class="row"><span class="lbl" data-i18n="writeLog">Write kraken.log (up to 1 MB)</span><input type="checkbox" id="f_log"></label>
@@ -568,7 +572,8 @@ var MSG = {
     rescan: 'Rescan', rebuildAll: 'Rebuild all',
     scanPaths: 'Scan paths',
     scanPathsHint: "One per line. Empty = default roots (/data/homebrew, /data/etaHEN/games, each drive's homebrew, etaHEN/games and root).",
-    injectAmpr: "Inject ampr-emu-ng into every game's fakelib",
+    addEmulators: 'Add the bundled DLC (dlc_emu) and PlayGo (pgo_stub) emulators when a game needs them and has none',
+    injectAmpr: "Inject ampr-emu-ng into folder games' fakelib (pkg games always get it)",
     amprAutoUpdate: 'Auto-update ampr-emu-ng (checked once at start)',
     amprUpdateNow: "Update ampr-emu-ng now",
     amprUpdating: "Updating ampr-emu-ng...",
@@ -581,6 +586,9 @@ var MSG = {
     amprReplaceYes: "Replace",
     backports: 'Apply backports',
     scanInterval: 'Scan interval, seconds (1-3600)',
+    stabilityWait: 'Wait for a copy to finish, seconds (0-3600, 0 = off)',
+    autoRemoveMissing: 'Remove a game from the home screen when its source is missing',
+    autoRemoveDelay: 'Remove after missing for, seconds (1-86400)',
     lowSpaceGb: 'Low space warning, GB',
     notify: 'System notifications',
     writeLog: 'Write kraken.log (up to 1 MB)',
@@ -645,7 +653,8 @@ var MSG = {
     rescan: 'Пересканировать', rebuildAll: 'Пересобрать все',
     scanPaths: 'Пути сканирования',
     scanPathsHint: 'По одному на строку. Пусто = корни по умолчанию (/data/homebrew, /data/etaHEN/games, на каждом накопителе homebrew, etaHEN/games и корень).',
-    injectAmpr: 'Внедрять ampr-emu-ng в fakelib каждой игры',
+    addEmulators: 'Добавлять встроенные эмуляторы DLC (dlc_emu) и PlayGo (pgo_stub), если они нужны игре и у неё их нет',
+    injectAmpr: 'Внедрять ampr-emu-ng в fakelib игр-папок (pkg-игры получают его всегда)',
     amprAutoUpdate: 'Автообновление ampr-emu-ng (проверка один раз при запуске)',
     amprUpdateNow: "Обновить ampr-emu-ng сейчас",
     amprUpdating: "Обновление ampr-emu-ng...",
@@ -658,6 +667,9 @@ var MSG = {
     amprReplaceYes: "Заменить",
     backports: 'Применять бэкпорты',
     scanInterval: 'Интервал сканирования, секунды (1-3600)',
+    stabilityWait: 'Ждать окончания копирования, секунды (0-3600, 0 = выкл.)',
+    autoRemoveMissing: 'Убирать игру с главного экрана, если её источник пропал',
+    autoRemoveDelay: 'Убирать после отсутствия в течение, секунды (1-86400)',
     lowSpaceGb: 'Предупреждать о нехватке места, GB',
     notify: 'Системные уведомления',
     writeLog: 'Писать kraken.log (до 1 MB)',
@@ -722,7 +734,8 @@ var MSG = {
     rescan: '重新扫描', rebuildAll: '全部重建',
     scanPaths: '扫描路径',
     scanPathsHint: '每行一个。留空 = 默认根目录（/data/homebrew、/data/etaHEN/games，以及每个驱动器的 homebrew、etaHEN/games 和根目录）。',
-    injectAmpr: '将 ampr-emu-ng 注入每个游戏的 fakelib',
+    addEmulators: '当游戏需要且自身没有时，添加内置的 DLC (dlc_emu) 和 PlayGo (pgo_stub) 模拟器',
+    injectAmpr: '将 ampr-emu-ng 注入文件夹游戏的 fakelib（pkg 游戏始终注入）',
     amprAutoUpdate: '自动更新 ampr-emu-ng（启动时检查一次）',
     amprUpdateNow: "立即更新 ampr-emu-ng",
     amprUpdating: "正在更新 ampr-emu-ng...",
@@ -735,6 +748,9 @@ var MSG = {
     amprReplaceYes: "替换",
     backports: '应用向下移植',
     scanInterval: '扫描间隔，秒 (1-3600)',
+    stabilityWait: '等待复制完成，秒 (0-3600，0 = 关闭)',
+    autoRemoveMissing: '来源缺失时从主屏幕移除游戏',
+    autoRemoveDelay: '缺失多久后移除，秒 (1-86400)',
     lowSpaceGb: '空间不足警告，GB',
     notify: '系统通知',
     writeLog: '写入 kraken.log（最多 1 MB）',
@@ -799,7 +815,8 @@ var MSG = {
     rescan: 'Neu scannen', rebuildAll: 'Alle neu erstellen',
     scanPaths: 'Scan-Pfade',
     scanPathsHint: 'Einer pro Zeile. Leer = Standardorte (/data/homebrew, /data/etaHEN/games, auf jedem Laufwerk homebrew, etaHEN/games und das Stammverzeichnis).',
-    injectAmpr: 'ampr-emu-ng in die fakelib jedes Spiels einfügen',
+    addEmulators: 'Mitgelieferte DLC- (dlc_emu) und PlayGo-Emulatoren (pgo_stub) hinzufügen, wenn ein Spiel sie braucht und keine hat',
+    injectAmpr: 'ampr-emu-ng in die fakelib von Ordner-Spielen einfügen (pkg-Spiele erhalten es immer)',
     amprAutoUpdate: 'ampr-emu-ng automatisch aktualisieren (einmal beim Start geprüft)',
     amprUpdateNow: "ampr-emu-ng jetzt aktualisieren",
     amprUpdating: "ampr-emu-ng wird aktualisiert...",
@@ -812,6 +829,9 @@ var MSG = {
     amprReplaceYes: "Ersetzen",
     backports: 'Backports anwenden',
     scanInterval: 'Scan-Intervall, Sekunden (1-3600)',
+    stabilityWait: 'Auf Ende des Kopierens warten, Sekunden (0-3600, 0 = aus)',
+    autoRemoveMissing: 'Spiel vom Startbildschirm entfernen, wenn seine Quelle fehlt',
+    autoRemoveDelay: 'Entfernen nach Fehlen von, Sekunden (1-86400)',
     lowSpaceGb: 'Warnung bei wenig Platz, GB',
     notify: 'Systembenachrichtigungen',
     writeLog: 'kraken.log schreiben (bis 1 MB)',
@@ -876,7 +896,8 @@ var MSG = {
     rescan: 'Volver a escanear', rebuildAll: 'Recrear todo',
     scanPaths: 'Rutas de escaneo',
     scanPathsHint: 'Una por línea. Vacío = raíces predeterminadas (/data/homebrew, /data/etaHEN/games y, en cada unidad, homebrew, etaHEN/games y la raíz).',
-    injectAmpr: 'Inyectar ampr-emu-ng en la fakelib de cada juego',
+    addEmulators: 'Añadir los emuladores incluidos de DLC (dlc_emu) y PlayGo (pgo_stub) cuando un juego los necesita y no los trae',
+    injectAmpr: 'Inyectar ampr-emu-ng en la fakelib de los juegos en carpeta (los juegos pkg siempre lo reciben)',
     amprAutoUpdate: 'Actualizar ampr-emu-ng automáticamente (se comprueba una vez al iniciar)',
     amprUpdateNow: "Actualizar ampr-emu-ng ahora",
     amprUpdating: "Actualizando ampr-emu-ng...",
@@ -889,6 +910,9 @@ var MSG = {
     amprReplaceYes: "Reemplazar",
     backports: 'Aplicar backports',
     scanInterval: 'Intervalo de escaneo, segundos (1-3600)',
+    stabilityWait: 'Esperar a que termine la copia, segundos (0-3600, 0 = desactivado)',
+    autoRemoveMissing: 'Quitar un juego de la pantalla de inicio si falta su origen',
+    autoRemoveDelay: 'Quitar tras faltar durante, segundos (1-86400)',
     lowSpaceGb: 'Aviso de poco espacio, GB',
     notify: 'Notificaciones del sistema',
     writeLog: 'Escribir kraken.log (hasta 1 MB)',
@@ -953,7 +977,8 @@ var MSG = {
     rescan: 'Réanalyser', rebuildAll: 'Tout recréer',
     scanPaths: "Chemins d'analyse",
     scanPathsHint: 'Un par ligne. Vide = racines par défaut (/data/homebrew, /data/etaHEN/games et, sur chaque disque, homebrew, etaHEN/games et la racine).',
-    injectAmpr: 'Injecter ampr-emu-ng dans la fakelib de chaque jeu',
+    addEmulators: "Ajouter les émulateurs DLC (dlc_emu) et PlayGo (pgo_stub) fournis quand un jeu en a besoin et n'en a pas",
+    injectAmpr: 'Injecter ampr-emu-ng dans la fakelib des jeux en dossier (les jeux pkg l\'ont toujours)',
     amprAutoUpdate: 'Mettre à jour ampr-emu-ng automatiquement (vérifié une fois au démarrage)',
     amprUpdateNow: "Mettre à jour ampr-emu-ng maintenant",
     amprUpdating: "Mise à jour d'ampr-emu-ng...",
@@ -966,6 +991,9 @@ var MSG = {
     amprReplaceYes: "Remplacer",
     backports: 'Appliquer les backports',
     scanInterval: "Intervalle d'analyse, secondes (1-3600)",
+    stabilityWait: "Attendre la fin d'une copie, secondes (0-3600, 0 = désactivé)",
+    autoRemoveMissing: "Retirer un jeu de l'écran d'accueil quand sa source manque",
+    autoRemoveDelay: 'Retirer après une absence de, secondes (1-86400)',
     lowSpaceGb: 'Alerte de place faible, GB',
     notify: 'Notifications système',
     writeLog: "Écrire kraken.log (jusqu'à 1 MB)",
@@ -1030,7 +1058,8 @@ var MSG = {
     rescan: '再スキャン', rebuildAll: 'すべて再作成',
     scanPaths: 'スキャンするパス',
     scanPathsHint: '1 行に 1 つ。空欄 = 既定のルート（/data/homebrew、/data/etaHEN/games、各ドライブの homebrew、etaHEN/games とルート）。',
-    injectAmpr: 'すべてのゲームの fakelib に ampr-emu-ng を組み込む',
+    addEmulators: 'ゲームが必要とし、自前で持っていない場合に同梱の DLC (dlc_emu) と PlayGo (pgo_stub) エミュレーターを追加',
+    injectAmpr: 'フォルダ形式のゲームの fakelib に ampr-emu-ng を組み込む（pkg ゲームには常に組み込み）',
     amprAutoUpdate: 'ampr-emu-ng を自動更新（起動時に一度確認）',
     amprUpdateNow: "今すぐ ampr-emu-ng を更新",
     amprUpdating: "ampr-emu-ng を更新中...",
@@ -1043,6 +1072,9 @@ var MSG = {
     amprReplaceYes: "置き換える",
     backports: 'バックポートを適用',
     scanInterval: 'スキャン間隔、秒 (1-3600)',
+    stabilityWait: 'コピー完了を待つ、秒 (0-3600、0 = オフ)',
+    autoRemoveMissing: 'ソースが見つからないゲームをホーム画面から削除',
+    autoRemoveDelay: '削除までの不在時間、秒 (1-86400)',
     lowSpaceGb: '空き容量不足の警告、GB',
     notify: 'システム通知',
     writeLog: 'kraken.log に書き込む（最大 1 MB）',
@@ -1107,7 +1139,8 @@ var MSG = {
     rescan: 'Escanear de novo', rebuildAll: 'Recriar tudo',
     scanPaths: 'Caminhos de varredura',
     scanPathsHint: 'Um por linha. Vazio = raízes padrão (/data/homebrew, /data/etaHEN/games e, em cada drive, homebrew, etaHEN/games e a raiz).',
-    injectAmpr: 'Injetar ampr-emu-ng na fakelib de cada jogo',
+    addEmulators: 'Adicionar os emuladores incluídos de DLC (dlc_emu) e PlayGo (pgo_stub) quando um jogo precisa e não os tem',
+    injectAmpr: 'Injetar ampr-emu-ng na fakelib dos jogos em pasta (jogos pkg sempre o recebem)',
     amprAutoUpdate: 'Atualizar o ampr-emu-ng automaticamente (verificado uma vez ao iniciar)',
     amprUpdateNow: "Atualizar o ampr-emu-ng agora",
     amprUpdating: "Atualizando o ampr-emu-ng...",
@@ -1120,6 +1153,9 @@ var MSG = {
     amprReplaceYes: "Substituir",
     backports: 'Aplicar backports',
     scanInterval: 'Intervalo de varredura, segundos (1-3600)',
+    stabilityWait: 'Aguardar o fim da cópia, segundos (0-3600, 0 = desligado)',
+    autoRemoveMissing: 'Remover um jogo da tela inicial quando a origem sumir',
+    autoRemoveDelay: 'Remover após ausência de, segundos (1-86400)',
     lowSpaceGb: 'Aviso de pouco espaço, GB',
     notify: 'Notificações do sistema',
     writeLog: 'Gravar kraken.log (até 1 MB)',
@@ -1184,7 +1220,8 @@ var MSG = {
     rescan: 'Ripeti scansione', rebuildAll: 'Ricrea tutto',
     scanPaths: 'Percorsi di scansione',
     scanPathsHint: "Uno per riga. Vuoto = radici predefinite (/data/homebrew, /data/etaHEN/games e, su ogni unità, homebrew, etaHEN/games e la radice).",
-    injectAmpr: 'Inserisci ampr-emu-ng nella fakelib di ogni gioco',
+    addEmulators: 'Aggiungi gli emulatori inclusi di DLC (dlc_emu) e PlayGo (pgo_stub) quando un gioco ne ha bisogno e non li ha',
+    injectAmpr: 'Inserisci ampr-emu-ng nella fakelib dei giochi in cartella (i giochi pkg lo ricevono sempre)',
     amprAutoUpdate: "Aggiorna automaticamente ampr-emu-ng (controllato una volta all'avvio)",
     amprUpdateNow: "Aggiorna ampr-emu-ng ora",
     amprUpdating: "Aggiornamento di ampr-emu-ng...",
@@ -1197,6 +1234,9 @@ var MSG = {
     amprReplaceYes: "Sostituisci",
     backports: 'Applica i backport',
     scanInterval: 'Intervallo di scansione, secondi (1-3600)',
+    stabilityWait: 'Attendi la fine della copia, secondi (0-3600, 0 = disattivato)',
+    autoRemoveMissing: 'Rimuovi un gioco dalla schermata home se la sorgente manca',
+    autoRemoveDelay: "Rimuovi dopo un'assenza di, secondi (1-86400)",
     lowSpaceGb: 'Avviso spazio insufficiente, GB',
     notify: 'Notifiche di sistema',
     writeLog: 'Scrivi kraken.log (fino a 1 MB)',
@@ -1261,7 +1301,8 @@ var MSG = {
     rescan: '다시 스캔', rebuildAll: '모두 다시 생성',
     scanPaths: '스캔 경로',
     scanPathsHint: '한 줄에 하나씩. 비워 두면 기본 루트(/data/homebrew, /data/etaHEN/games, 각 드라이브의 homebrew, etaHEN/games 및 루트).',
-    injectAmpr: '모든 게임의 fakelib에 ampr-emu-ng 삽입',
+    addEmulators: '게임에 필요하지만 없을 때 내장 DLC (dlc_emu) 및 PlayGo (pgo_stub) 에뮬레이터 추가',
+    injectAmpr: '폴더 게임의 fakelib에 ampr-emu-ng 삽입 (pkg 게임은 항상 삽입)',
     amprAutoUpdate: 'ampr-emu-ng 자동 업데이트 (시작 시 한 번 확인)',
     amprUpdateNow: "지금 ampr-emu-ng 업데이트",
     amprUpdating: "ampr-emu-ng 업데이트 중...",
@@ -1274,6 +1315,9 @@ var MSG = {
     amprReplaceYes: "바꾸기",
     backports: '백포트 적용',
     scanInterval: '스캔 간격, 초 (1-3600)',
+    stabilityWait: '복사가 끝날 때까지 대기, 초 (0-3600, 0 = 끔)',
+    autoRemoveMissing: '소스가 없으면 홈 화면에서 게임 제거',
+    autoRemoveDelay: '없어진 뒤 제거까지, 초 (1-86400)',
     lowSpaceGb: '공간 부족 경고, GB',
     notify: '시스템 알림',
     writeLog: 'kraken.log 기록 (최대 1 MB)',
@@ -1338,7 +1382,8 @@ var MSG = {
     rescan: 'إعادة المسح', rebuildAll: 'إعادة إنشاء الكل',
     scanPaths: 'مسارات المسح',
     scanPathsHint: 'مسار واحد في كل سطر. فارغ = الجذور الافتراضية (/data/homebrew و/data/etaHEN/games، وعلى كل محرك homebrew وetaHEN/games والجذر).',
-    injectAmpr: 'حقن ampr-emu-ng في fakelib لكل لعبة',
+    addEmulators: 'إضافة محاكيات DLC (dlc_emu) وPlayGo (pgo_stub) المضمّنة عندما تحتاجها اللعبة ولا تتضمنها',
+    injectAmpr: 'حقن ampr-emu-ng في fakelib لألعاب المجلدات (ألعاب pkg تحصل عليه دائمًا)',
     amprAutoUpdate: 'تحديث ampr-emu-ng تلقائيًا (يُفحص مرة واحدة عند البدء)',
     amprUpdateNow: "تحديث ampr-emu-ng الآن",
     amprUpdating: "جارٍ تحديث ampr-emu-ng...",
@@ -1351,6 +1396,9 @@ var MSG = {
     amprReplaceYes: "استبدال",
     backports: 'تطبيق الباكبورت',
     scanInterval: 'فاصل المسح، بالثواني (1-3600)',
+    stabilityWait: 'انتظار انتهاء النسخ، بالثواني (0-3600، 0 = إيقاف)',
+    autoRemoveMissing: 'إزالة اللعبة من الشاشة الرئيسية عند فقدان مصدرها',
+    autoRemoveDelay: 'الإزالة بعد الغياب لمدة، بالثواني (1-86400)',
     lowSpaceGb: 'تحذير المساحة القليلة، GB',
     notify: 'إشعارات النظام',
     writeLog: 'كتابة kraken.log (حتى 1 MB)',
@@ -1955,8 +2003,8 @@ async function poll() {
 }
 
 // ---- chunk 3: settings, log, views, keys ----
-var BOOLS = ['inject_ampr', 'ampr_auto_update', 'backports', 'notify', 'log', 'debug'];
-var NUMS = ['scan_interval_seconds', 'low_space_gb'];
+var BOOLS = ['inject_ampr', 'add_emulators', 'ampr_auto_update', 'backports', 'auto_remove_missing', 'notify', 'log', 'debug'];
+var NUMS = ['scan_interval_seconds', 'stability_wait_seconds', 'auto_remove_delay_seconds', 'low_space_gb'];
 var settingsRequest = 0;
 function fillSettings(v) {
   $('f_scanpath').value = (v.scanpath || []).join('\n');

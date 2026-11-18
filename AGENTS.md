@@ -13,6 +13,9 @@ sandbox. Web UI on port 8097 (opened from the "Kraken Mount" home-screen tile).
 - ampr-emu-ng ("ng") is NOT built here: it is its own project. Its released `libSceAmpr.sprx` is
   bundled from `vendor/ampr-emu-ng/`; to update, replace the file, `SHA256SUMS` and `VERSION` from
   the new GitHub release. A file put into `/data/krakenmount/ampr/` by hand overrides it. Do not edit the ng project from here unless the task asks for it.
+  `vendor/dlc_emu/` and `vendor/pgo_stub/` are drakmor's released binaries (DLC and PlayGo
+  emulators, added to a fakelib only when missing); to update, replace the sprx files, `SHA256SUMS`
+  and `VERSION` from the new GitHub release.
 - References (read-only): ShadowMountPlus (SMP, the C original of the register/fakelib/backport
   logic) and ps5-dump-forge (toolchain, self copy, tile, toasts, UI patterns).
 
@@ -33,7 +36,7 @@ sandbox. Web UI on port 8097 (opened from the "Kraken Mount" home-screen tile).
 | `src/net.rs` | HTTPS GET over the console's sceHttp/sceSsl (ampr-emu-ng auto-update) |
 | `src/i18n.rs` | toast texts in the console language (the UI's 11 languages) |
 | `crates/kraken-mount-pkg` | FPKG reader and its Kraken decoder (`decoder` module) |
-| `ps5/` | Docker build, linker, C shims (`compat.c` holds PS5 libc adapters) |
+| `ps5/` | Docker build, linker, C shims (`compat.c` holds PS5 libc adapters, `appdb.c` writes app.db through the SQLite amalgamation the Dockerfile fetches) |
 | `DESIGN.md` | the contract: paths, settings, cache rules, flow, module interfaces, web API |
 
 ## Build and check

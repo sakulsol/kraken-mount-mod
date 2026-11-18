@@ -16,6 +16,13 @@ RUN curl -fsSL --proto =https --retry 3 "$SDK_URL" -o /tmp/sdk.zip \
     && echo "$SDK_SHA256  /tmp/sdk.zip" | sha256sum -c - \
     && unzip -q /tmp/sdk.zip -d /opt && rm /tmp/sdk.zip \
     && test -x "$PS5_PAYLOAD_SDK/bin/prospero-clang"
+# SQLite 3.46.1 for ps5/appdb.c: app.db's snd0info.
+ARG SQLITE_URL=https://www.sqlite.org/2024/sqlite-amalgamation-3460100.zip
+ARG SQLITE_SHA256=77823cb110929c2bcb0f5d48e4833b5c59a8a6e40cdea3936b99e199dbbe5784
+RUN curl -fsSL --proto =https --retry 3 "$SQLITE_URL" -o /tmp/sqlite.zip \
+    && echo "$SQLITE_SHA256  /tmp/sqlite.zip" | sha256sum -c - \
+    && unzip -q /tmp/sqlite.zip -d /tmp && mv /tmp/sqlite-amalgamation-3460100 /opt/sqlite \
+    && rm /tmp/sqlite.zip && test -f /opt/sqlite/sqlite3.c && test -f /opt/sqlite/sqlite3.h
 RUN rustup component add rust-src
 COPY prepare-rust-std.py /tmp/
 RUN python3 /tmp/prepare-rust-std.py && rm /tmp/prepare-rust-std.py

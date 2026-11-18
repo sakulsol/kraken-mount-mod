@@ -83,6 +83,9 @@ fn build_and_register(state: &State, s: &Settings, src: &Source, fresh: &Fresh, 
         // reboot; a no-op when mounted): no sce_sys copy, no install call.
         cache::fix_access(src);
         register::mount(tid, &app0, backport_of(src))?;
+        // Backfills titles registered before snd0info was written, and resets a rewritten path;
+        // off the scan thread (and the work lock): a busy app.db waits up to 3 s.
+        register::spawn_snd0info(tid, 0);
         return Ok(false);
     }
     if stale {
@@ -174,7 +177,8 @@ fn process(state: &State, s: &Settings, src: &Source, registered: &mut HashSet<S
 }
 
 /// Replaces the UI's game list with the scan: an entry keeps its status while its source
-/// stays listed, new ones are "pending", duplicates "duplicate".
+/// stays listed, new ones are "pending", duplicates "duplicate". A source still being copied
+/// keeps its old entry (it is not gone), a new one shows up once it is stable.
 fn publish(state: &State, r: &scan::ScanResult) {
     let mut games = state.games.lock().unwrap();
     let old = std::mem::take(&mut *games);
@@ -187,6 +191,13 @@ fn publish(state: &State, r: &scan::ScanResult) {
     }
     for src in &r.duplicates {
         games.push(web::Game { src: src.clone(), status: "duplicate", error: None, cache_size: 0, cache_built: None });
+    }
+    for (path, _) in &r.unstable {
+        if let Some(g) = old.iter().find(|g| &g.src.path == path && g.status != "duplicate") {
+            if !games.iter().any(|n| n.src.title_id == g.src.title_id && n.status != "duplicate") {
+                games.push(g.clone());
+            }
+        }
     }
 }
 /// Debug: copies the kernel log (/dev/klog: module load failures, process crashes) to
@@ -278,7 +289,7 @@ fn mark_version(mark: &str, len: usize, crc: u32) -> Option<Option<&str>> {
 }
 
 /// `vX.Y.Z` (leading v optional); None = unknown.
-fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
+pub(crate) fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
     let v = v.trim();
     let mut it = v.strip_prefix('v').unwrap_or(v).split('.').map(|p| p.parse::<u32>().ok());
     let r = (it.next()??, it.next()??, it.next()??);
@@ -286,7 +297,7 @@ fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
 }
 
 /// `a` newer than `b`; an unknown version is older than any.
-fn newer(a: Option<&str>, b: Option<&str>) -> bool {
+pub(crate) fn newer(a: Option<&str>, b: Option<&str>) -> bool {
     a.and_then(parse_version) > b.and_then(parse_version)
 }
 
@@ -571,6 +582,106 @@ fn wait_ready(state: &State) {
     }
 }
 
+/// SMP auto_remove_missing_games timers (sm_game_cache.c), in memory only: a restart starts over.
+#[derive(Default)]
+struct MissingTimers {
+    /// Title id -> second (since start) its source was first seen missing.
+    since: HashMap<String, u64>,
+    /// Removed from the home screen in this run while the source stays missing.
+    removed: HashSet<String>,
+    /// Skipped as a real install (register::is_ours), logged once per run.
+    skipped: HashSet<String>,
+}
+
+impl MissingTimers {
+    /// `missing`: this pass's unprotected titles with a gone source. Any other title's timer
+    /// resets (source back, DLC, running). Returns the titles missing for `delay` s, not yet removed.
+    fn due(&mut self, missing: &HashSet<String>, now: u64, delay: u64) -> Vec<String> {
+        self.since.retain(|t, _| missing.contains(t));
+        self.removed.retain(|t| missing.contains(t));
+        let mut due = Vec::new();
+        for t in missing {
+            let since = *self.since.entry(t.clone()).or_insert(now);
+            if !self.removed.contains(t) && now.saturating_sub(since) >= delay {
+                due.push(t.clone());
+            }
+        }
+        due.sort();
+        due
+    }
+}
+
+/// ENOENT/ENOTDIR only: any other stat error (a drive that answers badly) is not "gone".
+fn gone(path: &std::path::Path) -> bool {
+    matches!(std::fs::symlink_metadata(path),
+        Err(e) if matches!(e.raw_os_error(), Some(libc::ENOENT | libc::ENOTDIR)))
+}
+
+/// Built caches (a `.done` stamp) whose stamp source is gone, as title id -> source. Not a title
+/// this scan lists (moved, or still being copied), a running one, or one with DLC in
+/// /user/addcont/<TID> (SMP keeps those; a stat error there protects too).
+fn missing_sources(r: &scan::ScanResult, running: &HashSet<String>) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for e in std::fs::read_dir(cache::CACHES).into_iter().flatten().flatten() {
+        let tid = e.file_name().to_string_lossy().into_owned();
+        let Ok(raw) = std::fs::read(e.path().join(cache::DONE)) else { continue };
+        let Ok(stamp) = serde_json::from_slice::<serde_json::Value>(&raw) else { continue };
+        let Some(source) = stamp["source"].as_str() else { continue };
+        if running.contains(&tid)
+            || r.games.iter().any(|g| g.title_id == tid)
+            || r.unstable.iter().any(|(p, t)| t.as_ref() == Some(&tid) || p.as_os_str() == source)
+            || !gone(source.as_ref())
+            || !gone(format!("/user/addcont/{tid}").as_ref())
+        {
+            continue;
+        }
+        out.insert(tid, source.to_string());
+    }
+    out
+}
+
+/// One auto-remove step after a full scan pass: start/reset timers, then unregister the due
+/// titles as /api/delete does (unmount without force, uninstall); the cache stays for a return.
+fn auto_remove(state: &State, s: &Settings, r: &scan::ScanResult, timers: &mut MissingTimers, now: u64) {
+    if !s.auto_remove_missing {
+        *timers = MissingTimers { skipped: std::mem::take(&mut timers.skipped), ..Default::default() };
+        return;
+    }
+    let running = state.running.lock().unwrap().clone();
+    let missing = missing_sources(r, &running);
+    let keys: HashSet<String> = missing.keys().cloned().collect();
+    for tid in timers.due(&keys, now, s.auto_remove_delay_secs) {
+        // A game may have started since `running` was read: stop, the next full pass retries.
+        if state.paused() {
+            return;
+        }
+        let source = &missing[&tid];
+        // Never uninstall a real installed game that shares the title id; rechecked every pass.
+        if let Err(p) = register::is_ours(&tid) {
+            if timers.skipped.insert(tid.clone()) {
+                log!("{tid}: auto-remove skipped: an installed copy exists ({})", p.display());
+            }
+            continue;
+        }
+        if let Err(e) = register::unmount_title(&tid) {
+            // Retried next pass: a busy mount means the title is in use.
+            log!("{tid}: auto-remove: unmount ({source}): {e}");
+            continue;
+        }
+        // ponytail: a failed uninstall is logged once and not retried until the source returns or a restart.
+        timers.removed.insert(tid.clone());
+        match register::uninstall(&tid) {
+            Ok(()) => {
+                register::forget(&tid);
+                let n = now.saturating_sub(timers.since[&tid]);
+                log!("{tid}: source {source} missing for {n} s, removed from the home screen");
+                state.titles.lock().unwrap().remove(&tid);
+            }
+            Err(e) => log!("{tid}: auto-remove: uninstall ({source}): {e}"),
+        }
+    }
+}
+
 fn main() {
     // ponytail: umask 0 for the whole payload, so every dir/file it creates is 0777/0666 (as SMP,
     // which mkdirs 0777) whatever elfldr passes: the game and the system services (save data,
@@ -600,7 +711,8 @@ fn main() {
     }
     let state = Arc::new(State::new(s));
     let st = state.settings.lock().unwrap().clone();
-    if st.ampr_auto_update && st.inject_ampr {
+    // Not gated on inject_ampr: pkg games get the ampr dir regardless.
+    if st.ampr_auto_update {
         let state = state.clone();
         std::thread::spawn(move || ampr_update(&state, false, 3));
     }
@@ -617,6 +729,9 @@ fn main() {
     }
     std::thread::spawn(move || launch::watch(titles, running));
     let (mut registered, mut failed) = (HashSet::new(), HashMap::new());
+    // Auto-remove timers start only after the first full pass: a drive not mounted yet at start
+    // looks like a missing source until then (the delay covers the rest).
+    let (mut timers, mut full_pass, t0) = (MissingTimers::default(), false, std::time::Instant::now());
     loop {
         // A game runs: nothing that could touch its app0 or /system_ex mount. Rescan, rebuild
         // and purge requests stay queued (forced / purge) for after it exits.
@@ -633,12 +748,20 @@ fn main() {
         *state.settings.lock().unwrap() = s.clone();
         state.busy.store(true, Ordering::SeqCst);
         let roots = if s.scan_paths.is_empty() { storage::default_scan_roots() } else { s.scan_paths.clone() };
-        let r = scan::scan(&roots, s.backports);
+        let r = scan::scan(&roots, s.backports, s.stability_wait_secs);
         if state.paused() {
             continue;
         }
         // Purge after the scan, so `keep` is this scan's library and every kept title rebuilds below.
-        if state.purge.swap(false, Ordering::SeqCst) {
+        // purge() empties kept caches too, and a source still being copied is not rebuilt this pass:
+        // the request waits until no source is in flight.
+        static PURGE_WAIT_LOGGED: AtomicBool = AtomicBool::new(false);
+        if !r.unstable.is_empty() && state.purge.load(Ordering::SeqCst) {
+            if !PURGE_WAIT_LOGGED.swap(true, Ordering::SeqCst) {
+                log!("purge waits: {} source(s) still being copied", r.unstable.len());
+            }
+        } else if state.purge.swap(false, Ordering::SeqCst) {
+            PURGE_WAIT_LOGGED.store(false, Ordering::SeqCst);
             let keep: Vec<String> = r.games.iter().map(|g| g.title_id.clone()).collect();
             match cache::purge(&keep) {
                 Ok(()) => log!("caches purged; {} kept for rebuild", keep.len()),
@@ -648,19 +771,27 @@ fn main() {
         }
         publish(&state, &r);
         // A source that left the scan (USB unplugged) goes through register::mount again when back.
-        registered.retain(|t| r.games.iter().any(|g| &g.title_id == t));
+        // A source still being copied stays registered (skipped this pass, not gone).
+        registered.retain(|t| r.games.iter().any(|g| &g.title_id == t)
+            || r.unstable.iter().any(|(_, u)| u.as_ref() == Some(t)));
         // Built caches are overlaid at launch from the start, not only once the scan reaches them.
         state.titles.lock().unwrap().extend(
             r.games.iter().filter(|g| cache::built_at(&g.title_id).is_some()).map(|g| g.title_id.clone()),
         );
         check_space(&state, &s);
+        let mut full = true;
         for src in &r.games {
             if state.paused() {
                 log!("a game started; scan paused until it exits");
+                full = false;
                 break;
             }
             process(&state, &s, src, &mut registered, &mut failed);
         }
+        if full_pass && full && !state.paused() {
+            auto_remove(&state, &s, &r, &mut timers, t0.elapsed().as_secs());
+        }
+        full_pass |= full;
         *state.cache_total.lock().unwrap() = cache::total_size();
         check_space(&state, &s);
         state.busy.store(false, Ordering::SeqCst);

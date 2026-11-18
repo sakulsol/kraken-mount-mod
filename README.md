@@ -1,10 +1,10 @@
 <p align="center"><img src="docs/logo.png" width="128" alt="Kraken Mount"></p>
 
-A PS5 game mounter. It finds games on the internal SSD, the M.2 drive and USB drives, and adds
-them to the home screen without installing them.
+A PS5 game mounter. It finds games on the internal SSD, the M.2 drive and USB drives.
 
 Supported formats: debug FPKG (`.pkg`) and game folders (plain, or packed with zstd or LZ4).
-Other formats, such as exFAT images, are obsolete and will not be supported.
+
+For large, demanding games, use a zstd pack format which shows better performance vs FPKG.
 
 ## How to
 
@@ -22,6 +22,11 @@ Other formats, such as exFAT images, are obsolete and will not be supported.
 `/data/krakenmount/ampr/` at start. To run another build, put its `libSceAmpr.sprx` there; it is
 kept until you delete it.
 
+A game that needs the DLC or PlayGo emulator and ships none gets the bundled one in its fakelib
+(setting `add_emulators`, on by default); a game's own copy is kept, unless it is a known older
+release of the bundled one, which is upgraded. Details:
+[DLC emulator](docs/dlcemu.md), [PlayGo stub](docs/playgo.md).
+
 Caches live in `/data/krakenmount/caches/<TITLE_ID>`, settings in
 `/data/krakenmount/config.toml` and the log in `/data/krakenmount/kraken.log`.
 
@@ -31,6 +36,12 @@ To build it yourself: `ps5/build.sh` (needs Docker), output `target/ps5/kraken-m
 
 - [drakmor/ShadowMountPlus](https://github.com/drakmor/ShadowMountPlus): home-screen
   registration, the fakelib sandbox overlay and backports are ported from it.
+- [drakmor/dlc_emu](https://github.com/drakmor/dlc_emu): the bundled DLC emulator
+  (`libSceAppContent.sprx`, `libSceNpEntitlementAccess.sprx`, `libSceGameUpdate.sprx`), added to a
+  game's fakelib when the game has a `dlc_emu.ini` at its root, each file only if the game lacks it.
+- [drakmor/pgo_stub](https://github.com/drakmor/pgo_stub): the bundled PlayGo stub
+  (`libScePlayGo.sprx`), added to a game's fakelib when its `eboot.bin` imports libScePlayGo and the
+  game ships none.
 - [ps5-payload-sdk](https://github.com/ps5-payload-dev/sdk): the PS5 toolchain.
 
 ## License
