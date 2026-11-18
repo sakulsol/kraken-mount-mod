@@ -2,9 +2,8 @@
 
 A PS5 game mounter. It finds games on the internal SSD, the M.2 drive and USB drives.
 
-Supported formats: debug FPKG (`.pkg`) and game folders (plain, or packed with zstd or LZ4).
-
-For large, demanding games, use a zstd pack format which shows better performance vs FPKG.
+**Supported formats**: debug FPKG (`.pkg`) and game folders (plain, or packed with zstd or LZ4).
+For large, demanding games, use the zstd pack format: it performs better than FPKG.
 
 ## How to
 
@@ -38,9 +37,10 @@ To build it yourself: `ps5/build.sh` (needs Docker), output `target/ps5/kraken-m
   registration, the fakelib sandbox overlay and backports are ported from it.
 - [drakmor/dlc_emu](https://github.com/drakmor/dlc_emu): the bundled DLC emulator
   (`libSceAppContent.sprx`, `libSceNpEntitlementAccess.sprx`, `libSceGameUpdate.sprx`), added to a
-  game's fakelib when the game has a `dlc_emu.ini` at its root, each file only if the game lacks it.
+  game's fakelib when the game has a `dlc_emu.ini` at its root; a known older release the game ships
+  is upgraded, any other copy is kept.
 - [drakmor/pgo_stub](https://github.com/drakmor/pgo_stub): the bundled PlayGo stub
-  (`libScePlayGo.sprx`), added to a game's fakelib when its `eboot.bin` imports libScePlayGo and the
+  (`libScePlayGo.sprx`), added to a game's fakelib when its `eboot.bin` imports `libScePlayGo` and the
   game ships none.
 - [ps5-payload-sdk](https://github.com/ps5-payload-dev/sdk): the PS5 toolchain.
 
