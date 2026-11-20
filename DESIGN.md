@@ -236,8 +236,9 @@ nullfs `app0 -> /system_ex/app/<TID>` (app0 = cache dir for FPKG, game folder fo
 for a Folder with a backport a unionfs of the backport dir on top (SMP
 `mount_backport_overlay`), then `sceAppInstUtilAppInstallTitleDir`. Where it does not resolve
 (FW 12+) the title is only staged: InstallAll registers every folder under `/user/app`, so the scan
-pass calls it once after its last game for every title staged in it (SMP install queue), also
-when the pass stopped for a game start. Logged `<TIDs>: <dlsym error>; sceAppInstUtilAppInstallAll:
+pass calls it once after its last game for every title staged in it (SMP install queue). Not
+when the pass stopped for a game start: nothing registers while a game runs, and the titles staged
+so far are not registered yet, so the pass after the game exits stages them again and installs them. Logged `<TIDs>: <dlsym error>; sceAppInstUtilAppInstallAll:
 <rc> (<ms> ms)`; a failure marks each of those titles failed. A batch of more than one title
 gets one toast (`<n> games registered` / `<n> games failed`) instead of one per title.
 Every staged copy (sce_sys, `icon0.png`, appmeta, trophy files) is set to 0666 after writing: a

@@ -852,8 +852,13 @@ fn main() {
             }
             process(&state, &s, src, &mut registered, &mut failed, &mut staged);
         }
-        // Also after a game started: one install call, as a per-title one could overlap a start.
-        install_staged(&state, &s, &mut staged, &mut registered, &mut failed);
+        // Not once a game has started (nothing registers while a game runs): the staged titles are
+        // not in `registered`, so the pass after the game exits stages them again and installs them.
+        // ponytail: a title already on the home screen (a rebuild) is only remounted then; its
+        // app.db row keeps the old version and name until its next full register.
+        if !state.paused() {
+            install_staged(&state, &s, &mut staged, &mut registered, &mut failed);
+        }
         if full_pass && full && !state.paused() {
             auto_remove(&state, &s, &r, &mut timers, t0.elapsed().as_secs());
         }
