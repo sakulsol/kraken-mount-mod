@@ -175,6 +175,23 @@ pub fn registered(l: Lang, name: &str) -> String {
     }
 }
 
+/// `n` games registered by one install call (FW 12+ batch): one toast instead of one per game.
+pub fn registered_many(l: Lang, n: usize) -> String {
+    match l {
+        Lang::En => format!("{n} games registered"),
+        Lang::Ru => format!("Зарегистрировано игр: {n}"),
+        Lang::Zh => format!("已注册 {n} 款游戏"),
+        Lang::De => format!("{n} Spiele registriert"),
+        Lang::Es => format!("{n} juegos registrados"),
+        Lang::Fr => format!("{n} jeux enregistrés"),
+        Lang::Ja => format!("{n} 本のゲームを登録しました"),
+        Lang::Pt => format!("{n} jogos registrados"),
+        Lang::It => format!("{n} giochi registrati"),
+        Lang::Ko => format!("게임 {n}개 등록됨"),
+        Lang::Ar => format!("تم تسجيل الألعاب: {n}"),
+    }
+}
+
 /// A newer ampr-emu-ng release (`version`, its tag) was downloaded and installed.
 pub fn ampr_updated(l: Lang, version: &str) -> String {
     match l {
@@ -223,6 +240,23 @@ pub fn failed(l: Lang, name: &str) -> String {
         Lang::It => format!("{name}: non riuscito, vedi il log"),
         Lang::Ko => format!("{name}: 실패했습니다. 로그를 확인하세요"),
         Lang::Ar => format!("{name}: فشل، راجع السجل"),
+    }
+}
+
+/// The install call for a batch of `n` games failed; each error is in kraken.log and the UI.
+pub fn failed_many(l: Lang, n: usize) -> String {
+    match l {
+        Lang::En => format!("{n} games failed, see the log"),
+        Lang::Ru => format!("Ошибка у игр: {n}, см. журнал"),
+        Lang::Zh => format!("{n} 款游戏失败，请查看日志"),
+        Lang::De => format!("{n} Spiele fehlgeschlagen, siehe Protokoll"),
+        Lang::Es => format!("{n} juegos con error, consulta el registro"),
+        Lang::Fr => format!("{n} jeux en échec, voir le journal"),
+        Lang::Ja => format!("{n} 本のゲームが失敗しました。ログを確認してください"),
+        Lang::Pt => format!("{n} jogos falharam, veja o log"),
+        Lang::It => format!("{n} giochi non riusciti, vedi il log"),
+        Lang::Ko => format!("게임 {n}개 실패. 로그를 확인하세요"),
+        Lang::Ar => format!("فشلت الألعاب: {n}، راجع السجل"),
     }
 }
 

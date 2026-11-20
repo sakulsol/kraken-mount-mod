@@ -69,8 +69,19 @@ fn backport_of(src: &Source) -> Option<&std::path::Path> {
     }
 }
 
-/// Builds when stale or forced, then registers. Ok(true) when the title was (re)registered.
-fn build_and_register(state: &State, s: &Settings, src: &Source, fresh: &Fresh, forced: bool) -> std::io::Result<bool> {
+/// What build_and_register did with a title.
+#[derive(PartialEq)]
+enum Reg {
+    /// Registered by an earlier run: only mounted.
+    Kept,
+    /// Registered now.
+    New,
+    /// Staged and mounted, registered by the pass's `install_staged` (FW 12+).
+    Staged,
+}
+
+/// Builds when stale or forced, then registers.
+fn build_and_register(state: &State, s: &Settings, src: &Source, fresh: &Fresh, forced: bool) -> std::io::Result<Reg> {
     let tid = &src.title_id;
     if let (false, Fresh::Fakelib(why)) = (forced, fresh) {
         // Only fakelib/ is behind: recompose it, then go on as a fresh cache (mount or register).
@@ -87,7 +98,7 @@ fn build_and_register(state: &State, s: &Settings, src: &Source, fresh: &Fresh, 
         // Backfills titles registered before snd0info was written, and resets a rewritten path;
         // off the scan thread (and the work lock): a busy app.db waits up to 3 s.
         register::spawn_snd0info(tid, 0);
-        return Ok(false);
+        return Ok(Reg::Kept);
     }
     if stale {
         match fresh {
@@ -104,9 +115,9 @@ fn build_and_register(state: &State, s: &Settings, src: &Source, fresh: &Fresh, 
     // Once per run per title: build_and_register runs only for titles not registered in this run.
     cache::fix_access(src);
     let t0 = std::time::Instant::now();
-    register::register(tid, &app0, &cache::sce_sys(src), backport_of(src))?;
-    log!("{tid}: registered in {} ms", t0.elapsed().as_millis());
-    Ok(true)
+    let new = register::register(tid, &app0, &cache::sce_sys(src), backport_of(src))?;
+    log!("{tid}: {} in {} ms", if new { "registered" } else { "staged" }, t0.elapsed().as_millis());
+    Ok(if new { Reg::New } else { Reg::Staged })
 }
 
 /// Fresh::Moved: a folder game's /system_ex/app/<TID> stack (nullfs + backport unionfs) is redone
@@ -126,7 +137,11 @@ fn relink_moved(s: &Settings, src: &Source, from: &std::path::Path) -> std::io::
 
 /// One game of the scan: check, build, register, status. A failed game is retried only when
 /// its inputs_key changes or a rebuild is forced.
-fn process(state: &State, s: &Settings, src: &Source, registered: &mut HashSet<String>, failed: &mut HashMap<PathBuf, String>) {
+/// `staged` collects the titles waiting for the pass's `install_staged`.
+fn process(
+    state: &State, s: &Settings, src: &Source, registered: &mut HashSet<String>, failed: &mut HashMap<PathBuf, String>,
+    staged: &mut Vec<Source>,
+) {
     let tid = &src.title_id;
     let forced = state.forced.lock().unwrap().remove(tid);
     let mut fresh = cache::check(src, s);
@@ -154,6 +169,45 @@ fn process(state: &State, s: &Settings, src: &Source, registered: &mut HashSet<S
         state.update(&src.path, |g| g.status = "checking");
         build_and_register(state, s, src, &fresh, forced)
     };
+    match r {
+        Ok(Reg::Staged) => {
+            state.update(&src.path, |g| g.status = "checking");
+            staged.push(src.clone());
+        }
+        r => finish(state, s, src, registered, failed, r.map(|reg| reg == Reg::New), true),
+    }
+}
+
+/// FW 12+: one sceAppInstUtilAppInstallAll for every title staged this pass, then each gets
+/// what `process` gives a title registered on its own (status, toast, or the error).
+fn install_staged(
+    state: &State, s: &Settings, staged: &mut Vec<Source>, registered: &mut HashSet<String>,
+    failed: &mut HashMap<PathBuf, String>,
+) {
+    if staged.is_empty() {
+        return;
+    }
+    let tids: Vec<String> = staged.iter().map(|g| g.title_id.clone()).collect();
+    let r = register::install_all(&tids);
+    let one = tids.len() == 1;
+    for src in staged.drain(..) {
+        let r = r.as_ref().map(|_| true).map_err(|e| std::io::Error::new(e.kind(), e.to_string()));
+        finish(state, s, &src, registered, failed, r, one);
+    }
+    // One toast for a batch: the console shows queued toasts one by one and the PS button opens
+    // the one on screen, so a toast per game (32 at once on a rebuild of all) blocked leaving a game.
+    if !one {
+        let l = i18n::lang();
+        toast(s, &if r.is_ok() { i18n::registered_many(l, tids.len()) } else { i18n::failed_many(l, tids.len()) });
+    }
+}
+
+/// Status, toast (`notify`) and failure record of a processed title. Ok(true): registered now.
+fn finish(
+    state: &State, s: &Settings, src: &Source, registered: &mut HashSet<String>, failed: &mut HashMap<PathBuf, String>,
+    r: std::io::Result<bool>, notify: bool,
+) {
+    let tid = &src.title_id;
     let (size, built) = (cache::size(tid), cache::built_at(tid));
     match r {
         Ok(new) => {
@@ -163,7 +217,7 @@ fn process(state: &State, s: &Settings, src: &Source, registered: &mut HashSet<S
             state.update(&src.path, |g| {
                 (g.status, g.error, g.cache_size, g.cache_built) = ("ready", None, size, built);
             });
-            if new {
+            if new && notify {
                 toast(s, &i18n::registered(i18n::lang(), &src.title_name));
             }
         }
@@ -174,7 +228,9 @@ fn process(state: &State, s: &Settings, src: &Source, registered: &mut HashSet<S
             state.update(&src.path, |g| {
                 (g.status, g.error, g.cache_size, g.cache_built) = ("error", Some(e.clone()), size, built);
             });
-            toast(s, &i18n::failed(i18n::lang(), &src.title_name));
+            if notify {
+                toast(s, &i18n::failed(i18n::lang(), &src.title_name));
+            }
         }
     }
 }
@@ -787,15 +843,17 @@ fn main() {
             r.games.iter().filter(|g| cache::built_at(&g.title_id).is_some()).map(|g| g.title_id.clone()),
         );
         check_space(&state, &s);
-        let mut full = true;
+        let (mut full, mut staged) = (true, Vec::new());
         for src in &r.games {
             if state.paused() {
                 log!("a game started; scan paused until it exits");
                 full = false;
                 break;
             }
-            process(&state, &s, src, &mut registered, &mut failed);
+            process(&state, &s, src, &mut registered, &mut failed, &mut staged);
         }
+        // Also after a game started: one install call, as a per-title one could overlap a start.
+        install_staged(&state, &s, &mut staged, &mut registered, &mut failed);
         if full_pass && full && !state.paused() {
             auto_remove(&state, &s, &r, &mut timers, t0.elapsed().as_secs());
         }

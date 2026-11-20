@@ -388,18 +388,7 @@ pub fn forget(tid: &str) {
 
 /// sceAppInstUtilAppInstallTitleDir(tid, "/user/app/", NULL); 0 and 0x80990002 are success.
 fn install_title_dir(title_id: &str) -> io::Result<()> {
-    let f = match INSTALL_FN.get_or_init(resolve_install) {
-        Ok(f) => *f,
-        Err(e) => {
-            // dump-forge's last resort: registers every folder under /user/app, ours included.
-            extern "C" {
-                fn sceAppInstUtilAppInstallAll(reserved: *mut c_void) -> i32;
-            }
-            let rc = unsafe { sceAppInstUtilAppInstallAll(ptr::null_mut()) } as u32;
-            log!("{title_id}: {e}; sceAppInstUtilAppInstallAll: {rc:#x}");
-            return if rc == 0 { Ok(()) } else { Err(err(format!("sceAppInstUtilAppInstallAll: {rc:#x}"))) };
-        }
-    };
+    let f = *INSTALL_FN.get_or_init(resolve_install).as_ref().map_err(|e| err(e.clone()))?;
     let tid = CString::new(title_id).map_err(|_| err(format!("NUL in {title_id}")))?;
     let base = CString::new(format!("{APP_BASE}/")).expect("no NUL");
     let rc = unsafe { f(tid.as_ptr(), base.as_ptr(), ptr::null_mut()) } as u32;
@@ -409,14 +398,36 @@ fn install_title_dir(title_id: &str) -> io::Result<()> {
     Err(err(format!("sceAppInstUtilAppInstallTitleDir({title_id}): {rc:#x}")))
 }
 
+/// dump-forge's last resort when sceAppInstUtilAppInstallTitleDir does not resolve (FW 12+):
+/// registers every folder under /user/app, so one call (~20 s) covers every title `register`
+/// staged in a scan pass, like SMP's install queue. The get_or_init runs the AppInstUtil init.
+pub fn install_all(title_ids: &[String]) -> io::Result<()> {
+    extern "C" {
+        fn sceAppInstUtilAppInstallAll(reserved: *mut c_void) -> i32;
+    }
+    let why = INSTALL_FN.get_or_init(resolve_install).as_ref().err().cloned().unwrap_or_default();
+    let t = std::time::Instant::now();
+    let rc = unsafe { sceAppInstUtilAppInstallAll(ptr::null_mut()) } as u32;
+    let ms = t.elapsed().as_millis();
+    log!("{}: {why}; sceAppInstUtilAppInstallAll: {rc:#x} ({ms} ms)", title_ids.join(", "));
+    if rc != 0 {
+        return Err(err(format!("sceAppInstUtilAppInstallAll: {rc:#x}")));
+    }
+    for tid in title_ids {
+        spawn_snd0info(tid, 200);
+    }
+    Ok(())
+}
+
 /// SMP mount_and_install: stage `sce_sys` into /user/app/<TID> (sce_sys + icon0.png) and
 /// /user/appmeta/<TID> (param.*, *.png incl. pic0/pic1, *.dds, *.at9), trophy metadata, nullfs
 /// `app0` at /system_ex/app/<TID>, the optional backport unionfs on top, then register.
-pub fn register(title_id: &str, app0: &Path, sce_sys: &Path, backport: Option<&Path>) -> io::Result<()> {
+/// Ok(false): staged and mounted only, waiting for the pass's `install_all` (no TitleDir).
+pub fn register(title_id: &str, app0: &Path, sce_sys: &Path, backport: Option<&Path>) -> io::Result<bool> {
     ctx(register_inner(title_id, app0, sce_sys, backport), || format!("register {title_id} ({})", app0.display()))
 }
 
-fn register_inner(title_id: &str, app0: &Path, sce_sys: &Path, backport: Option<&Path>) -> io::Result<()> {
+fn register_inner(title_id: &str, app0: &Path, sce_sys: &Path, backport: Option<&Path>) -> io::Result<bool> {
     let app_dir = Path::new(APP_BASE).join(title_id);
     let user_sce_sys = app_dir.join("sce_sys");
     ctx(copy_dir(title_id, sce_sys, &user_sce_sys), || {
@@ -430,11 +441,14 @@ fn register_inner(title_id: &str, app0: &Path, sce_sys: &Path, backport: Option<
     ctx(copy_appmeta(title_id, sce_sys, &appmeta), || format!("appmeta -> {}", appmeta.display()))?;
     ctx(update_trophy_metadata(title_id, sce_sys), || "trophy metadata".into())?;
     mount_inner(title_id, app0, backport, false)?;
+    if INSTALL_FN.get_or_init(resolve_install).is_err() {
+        return Ok(false);
+    }
     install_title_dir(title_id)?;
     // ponytail: SMP's fixed 200 ms (sm_install.c) for the install's app.db row to land; a row
     // not there yet is caught by the next run's already-registered pass or the next game exit.
     spawn_snd0info(title_id, 200);
-    Ok(())
+    Ok(true)
 }
 
 /// `set_snd0info` on its own thread after `delay_ms`, so a busy app.db (up to 3 s) does not hold
