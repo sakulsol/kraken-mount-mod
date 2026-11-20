@@ -107,7 +107,9 @@ impl State {
     }
 }
 
-fn game_json(g: &Game) -> serde_json::Value {
+/// `playgo_off`: the setting's title ids; None while add_emulators is off (no stub at all, so the
+/// UI shows no switch).
+fn game_json(g: &Game, playgo_off: Option<&[String]>) -> serde_json::Value {
     let (kind, packing) = match g.src.kind {
         Kind::Pkg => ("pkg", None),
         Kind::Folder(Packing::Plain) => ("folder", Some("plain")),
@@ -128,6 +130,9 @@ fn game_json(g: &Game) -> serde_json::Value {
         "cache_size": g.cache_size,
         "cache_built": g.cache_built,
         "backport": g.src.backport.as_ref().map(|b| b.to_string_lossy()),
+        // ponytail: reads the game's .ampr on every state poll (a few hundred bytes per game).
+        "playgo": playgo_off.and_then(|_| crate::cache::playgo_import(&g.src.title_id)),
+        "playgo_off": playgo_off.is_some_and(|l| l.iter().any(|t| *t == g.src.title_id)),
     })
 }
 
@@ -321,6 +326,7 @@ fn route(state: &State, head: &str, body: &[u8], loopback: bool) -> Reply {
             state.wake();
             no_content()
         }
+        ("POST", p) if p.starts_with("/api/playgo/") => post_playgo(state, &p["/api/playgo/".len()..], body),
         ("POST", p) if p.starts_with("/api/rebuild/") => rebuild(state, &p["/api/rebuild/".len()..]),
         ("POST", p) if p.starts_with("/api/delete/") => delete(state, &p["/api/delete/".len()..], body),
         ("POST", "/api/eject") => eject(state, body),
@@ -341,20 +347,58 @@ fn route(state: &State, head: &str, body: &[u8], loopback: bool) -> Reply {
 }
 
 fn post_settings(state: &State, body: &[u8]) -> Reply {
-    let parsed = serde_json::from_slice(body).map_err(|e| format!("settings: {e}")).and_then(|v| config::from_json(&v));
-    let s = match parsed {
+    let parsed = serde_json::from_slice::<serde_json::Value>(body)
+        .map_err(|e| format!("settings: {e}"))
+        .and_then(|v| Ok((config::from_json(&v)?, v.get("playgo_off").is_some())));
+    let (mut s, has_playgo_off) = match parsed {
         Ok(s) => s,
         Err(e) => {
             log!("settings rejected: {e}");
             return reply(400, "text/plain", e);
         }
     };
+    // Held across the save: a concurrent /api/playgo change is not lost.
+    let mut cur = state.settings.lock().unwrap();
+    // The settings form does not send the per-game list: keep it.
+    if !has_playgo_off {
+        // From the file: a scan pass may have put an older copy into state.settings.
+        s.playgo_off = config::load().playgo_off;
+    }
     if let Err(e) = config::save(&s) {
         log!("settings: save {}: {e}", config::CONFIG_PATH);
         return reply(500, "text/plain", e.to_string());
     }
     log!("settings saved");
-    *state.settings.lock().unwrap() = s;
+    *cur = s;
+    drop(cur);
+    state.wake();
+    no_content()
+}
+
+/// POST /api/playgo/<TID>, body `on` or `off`: the bundled PlayGo stub for one game (playgo_off).
+fn post_playgo(state: &State, tid: &str, body: &[u8]) -> Reply {
+    if !crate::scan::valid_tid(tid) || state.source(tid).is_none() {
+        return not_found();
+    }
+    let off = match body {
+        b"on" => false,
+        b"off" => true,
+        _ => return reply(400, "text/plain", "expected on or off"),
+    };
+    let mut cur = state.settings.lock().unwrap();
+    // From the file, not state.settings: a scan pass may have put an older copy there.
+    let mut s = config::load();
+    s.playgo_off.retain(|t| t != tid);
+    if off {
+        s.playgo_off.push(tid.to_string());
+    }
+    if let Err(e) = config::save(&s) {
+        log!("{tid}: PlayGo stub: save {}: {e}", config::CONFIG_PATH);
+        return reply(500, "text/plain", e.to_string());
+    }
+    log!("{tid}: PlayGo stub {}", if off { "off" } else { "on" });
+    *cur = s;
+    drop(cur);
     state.wake();
     no_content()
 }
@@ -394,7 +438,11 @@ fn dbg_file(path: &str, query: &str) -> Reply {
 }
 
 fn api_state(state: &State) -> Vec<u8> {
-    let games: Vec<_> = state.games.lock().unwrap().iter().map(game_json).collect();
+    let playgo_off = {
+        let s = state.settings.lock().unwrap();
+        s.add_emulators.then(|| s.playgo_off.clone())
+    };
+    let games: Vec<_> = state.games.lock().unwrap().iter().map(|g| game_json(g, playgo_off.as_deref())).collect();
     let all = storage::drives();
     let drives: Vec<_> = all
         .iter()

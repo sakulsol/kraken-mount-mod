@@ -11,7 +11,8 @@ For large, demanding games, use the zstd pack format: it performs better than FP
    and send it to your jailbroken PS5 with the ELF loader (elfldr, port 9021) or payload-manager:
    `nc -w 3 <ps5-ip> 9021 < kraken-mount.elf`. kstuff must be loaded, and ShadowMount+ must not be
    running: Kraken Mount waits until both are true.
-2. Put each game in a scan root:
+2. Put each game in a scan root, or in a folder directly inside one (for example
+   `/data/homebrew/rpg/<game>`; deeper folders are not scanned, and on a drive root only the root itself):
    - internal SSD: `/data/homebrew`, `/data/etaHEN/games`
    - M.2 or extended drive (`/mnt/ext0`, `/mnt/ext1`): `homebrew`, `etaHEN/games` or the drive root
    - USB drive (`/mnt/usb0` to `/mnt/usb7`): `homebrew`, `etaHEN/games` or the drive root
@@ -23,7 +24,8 @@ kept until you delete it.
 
 A game that needs the DLC or PlayGo emulator and ships none gets the bundled one in its fakelib
 (setting `add_emulators`, on by default); a game's own copy is kept, unless it is a known older
-release of the bundled one, which is upgraded. Details:
+release of the bundled one, which is upgraded. The PlayGo stub can be turned off per game in the
+game's details. Details:
 [DLC emulator](docs/dlcemu.md), [PlayGo stub](docs/playgo.md).
 
 Caches live in `/data/krakenmount/caches/<TITLE_ID>`, settings in

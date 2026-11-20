@@ -342,6 +342,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .msg { min-height: 1.2em; margin-top: 0.6rem; color: var(--danger-ink); overflow-wrap: break-word; }
 .m-err { margin-top: 0.9rem; color: var(--danger-ink); overflow-wrap: break-word; }
 .m-err:empty { display: none; }
+.m-row { margin: 1.2rem 0 0; }
 #confirm { z-index: 20; }
 .dialog {
   width: 100%; max-width: 34rem; max-height: 100%; overflow: auto; padding: 1.6rem;
@@ -489,6 +490,9 @@ button:disabled { opacity: 0.5; cursor: default; }
     </div>
     <div class="panel">
       <dl class="fields" id="m-fields"></dl>
+      <label class="row m-row" id="m-playgo-row" hidden><span><span class="lbl" data-i18n="playgoStub">PlayGo stub</span>
+        <span class="hint" data-i18n="playgoHint">Turn off if the game stays on a black screen; turn on if it asks to finish the download.</span></span>
+        <input type="checkbox" id="m-playgo"></label>
       <div class="m-err" id="m-err"></div>
     </div>
     <div class="storage-line">
@@ -552,6 +556,7 @@ var MSG = {
     fTitleId: 'Title ID', fVersion: 'Version', fStatus: 'Status', fType: 'Type', fDrive: 'Drive',
     fPath: 'Path', fCachePath: 'Cache path', fCacheSize: 'Cache size', fCacheBuilt: 'Cache built',
     fBackport: 'Backport', yes: 'Yes', no: 'No', notBuilt: 'not built',
+    playgoStub: 'PlayGo stub', playgoHint: 'Turn off if the game stays on a black screen; turn on if it asks to finish the download.',
     szGame: 'Game', szDlc: 'DLC', szSave: 'Save', szCache: 'Cache',
     szPart: '{part} {size}', szNa: '{part} n/a', szTotal: 'Total {size}',
     sizesNone: 'Sizes unavailable', sizesLoading: 'Loading sizes...',
@@ -637,6 +642,7 @@ var MSG = {
     fTitleId: 'Title ID', fVersion: 'Версия', fStatus: 'Статус', fType: 'Тип', fDrive: 'Накопитель',
     fPath: 'Путь', fCachePath: 'Путь кеша', fCacheSize: 'Размер кеша', fCacheBuilt: 'Кеш собран',
     fBackport: 'Бэкпорт', yes: 'Да', no: 'Нет', notBuilt: 'не собран',
+    playgoStub: 'Заглушка PlayGo', playgoHint: 'Выключите, если игра остаётся на чёрном экране; включите, если она просит завершить загрузку.',
     szGame: 'Игра', szDlc: 'DLC', szSave: 'Сохранения', szCache: 'Кеш',
     szPart: '{part} {size}', szNa: '{part} н/д', szTotal: 'Всего {size}',
     sizesNone: 'Размеры недоступны', sizesLoading: 'Загрузка размеров...',
@@ -720,6 +726,7 @@ var MSG = {
     fTitleId: 'Title ID', fVersion: '版本', fStatus: '状态', fType: '类型', fDrive: '驱动器',
     fPath: '路径', fCachePath: '缓存路径', fCacheSize: '缓存大小', fCacheBuilt: '缓存构建时间',
     fBackport: '向下移植', yes: '是', no: '否', notBuilt: '未构建',
+    playgoStub: 'PlayGo 存根', playgoHint: '如果游戏停留在黑屏，请关闭；如果游戏要求完成下载，请开启。',
     szGame: '游戏', szDlc: 'DLC', szSave: '存档', szCache: '缓存',
     szPart: '{part} {size}', szNa: '{part} 不可用', szTotal: '总计 {size}',
     sizesNone: '大小不可用', sizesLoading: '正在加载大小...',
@@ -803,6 +810,7 @@ var MSG = {
     fTitleId: 'Title ID', fVersion: 'Version', fStatus: 'Status', fType: 'Typ', fDrive: 'Laufwerk',
     fPath: 'Pfad', fCachePath: 'Cache-Pfad', fCacheSize: 'Cache-Größe', fCacheBuilt: 'Cache erstellt',
     fBackport: 'Backport', yes: 'Ja', no: 'Nein', notBuilt: 'nicht erstellt',
+    playgoStub: 'PlayGo-Stub', playgoHint: 'Ausschalten, wenn das Spiel auf einem schwarzen Bildschirm bleibt; einschalten, wenn es verlangt, den Download abzuschließen.',
     szGame: 'Spiel', szDlc: 'DLC', szSave: 'Spielstand', szCache: 'Cache',
     szPart: '{part} {size}', szNa: '{part} k. A.', szTotal: 'Gesamt {size}',
     sizesNone: 'Größen nicht verfügbar', sizesLoading: 'Größen werden geladen...',
@@ -886,6 +894,7 @@ var MSG = {
     fTitleId: 'Title ID', fVersion: 'Versión', fStatus: 'Estado', fType: 'Tipo', fDrive: 'Unidad',
     fPath: 'Ruta', fCachePath: 'Ruta de caché', fCacheSize: 'Tamaño de caché', fCacheBuilt: 'Caché creada',
     fBackport: 'Backport', yes: 'Sí', no: 'No', notBuilt: 'sin crear',
+    playgoStub: 'Stub de PlayGo', playgoHint: 'Desactívalo si el juego se queda en pantalla negra; actívalo si pide terminar la descarga.',
     szGame: 'Juego', szDlc: 'DLC', szSave: 'Partidas', szCache: 'Caché',
     szPart: '{part} {size}', szNa: '{part} n/d', szTotal: 'Total {size}',
     sizesNone: 'Tamaños no disponibles', sizesLoading: 'Cargando tamaños...',
@@ -969,6 +978,7 @@ var MSG = {
     fTitleId: 'Title ID', fVersion: 'Version', fStatus: 'État', fType: 'Type', fDrive: 'Disque',
     fPath: 'Chemin', fCachePath: 'Chemin du cache', fCacheSize: 'Taille du cache', fCacheBuilt: 'Cache créé',
     fBackport: 'Backport', yes: 'Oui', no: 'Non', notBuilt: 'non créé',
+    playgoStub: 'Stub PlayGo', playgoHint: "Désactivez-le si le jeu reste sur un écran noir ; activez-le s'il demande de terminer le téléchargement.",
     szGame: 'Jeu', szDlc: 'DLC', szSave: 'Sauvegarde', szCache: 'Cache',
     szPart: '{part} {size}', szNa: '{part} n/d', szTotal: 'Total {size}',
     sizesNone: 'Tailles indisponibles', sizesLoading: 'Chargement des tailles...',
@@ -1052,6 +1062,7 @@ var MSG = {
     fTitleId: 'Title ID', fVersion: 'バージョン', fStatus: '状態', fType: '種類', fDrive: 'ドライブ',
     fPath: 'パス', fCachePath: 'キャッシュのパス', fCacheSize: 'キャッシュのサイズ', fCacheBuilt: 'キャッシュ作成日時',
     fBackport: 'バックポート', yes: 'はい', no: 'いいえ', notBuilt: '未作成',
+    playgoStub: 'PlayGo スタブ', playgoHint: 'ゲームが黒い画面のままならオフに、ダウンロードの完了を求められたらオンにします。',
     szGame: 'ゲーム', szDlc: 'DLC', szSave: 'セーブ', szCache: 'キャッシュ',
     szPart: '{part} {size}', szNa: '{part} 不明', szTotal: '合計 {size}',
     sizesNone: 'サイズを取得できません', sizesLoading: 'サイズを読み込んでいます...',
@@ -1135,6 +1146,7 @@ var MSG = {
     fTitleId: 'Title ID', fVersion: 'Versão', fStatus: 'Status', fType: 'Tipo', fDrive: 'Drive',
     fPath: 'Caminho', fCachePath: 'Caminho do cache', fCacheSize: 'Tamanho do cache', fCacheBuilt: 'Cache criado',
     fBackport: 'Backport', yes: 'Sim', no: 'Não', notBuilt: 'não criado',
+    playgoStub: 'Stub do PlayGo', playgoHint: 'Desligue se o jogo ficar na tela preta; ligue se ele pedir para concluir o download.',
     szGame: 'Jogo', szDlc: 'DLC', szSave: 'Salvamento', szCache: 'Cache',
     szPart: '{part} {size}', szNa: '{part} n/d', szTotal: 'Total {size}',
     sizesNone: 'Tamanhos indisponíveis', sizesLoading: 'Carregando tamanhos...',
@@ -1218,6 +1230,7 @@ var MSG = {
     fTitleId: 'Title ID', fVersion: 'Versione', fStatus: 'Stato', fType: 'Tipo', fDrive: 'Unità',
     fPath: 'Percorso', fCachePath: 'Percorso cache', fCacheSize: 'Dimensione cache', fCacheBuilt: 'Cache creata',
     fBackport: 'Backport', yes: 'Sì', no: 'No', notBuilt: 'non creata',
+    playgoStub: 'Stub PlayGo', playgoHint: 'Disattivalo se il gioco resta su schermo nero; attivalo se chiede di completare il download.',
     szGame: 'Gioco', szDlc: 'DLC', szSave: 'Salvataggi', szCache: 'Cache',
     szPart: '{part} {size}', szNa: '{part} n/d', szTotal: 'Totale {size}',
     sizesNone: 'Dimensioni non disponibili', sizesLoading: 'Caricamento delle dimensioni...',
@@ -1301,6 +1314,7 @@ var MSG = {
     fTitleId: 'Title ID', fVersion: '버전', fStatus: '상태', fType: '유형', fDrive: '드라이브',
     fPath: '경로', fCachePath: '캐시 경로', fCacheSize: '캐시 크기', fCacheBuilt: '캐시 생성 시각',
     fBackport: '백포트', yes: '예', no: '아니요', notBuilt: '생성 안 됨',
+    playgoStub: 'PlayGo 스텁', playgoHint: '게임이 검은 화면에서 멈추면 끄고, 다운로드를 완료하라고 하면 켜세요.',
     szGame: '게임', szDlc: 'DLC', szSave: '세이브', szCache: '캐시',
     szPart: '{part} {size}', szNa: '{part} 해당 없음', szTotal: '합계 {size}',
     sizesNone: '크기를 알 수 없음', sizesLoading: '크기를 불러오는 중...',
@@ -1384,6 +1398,7 @@ var MSG = {
     fTitleId: 'Title ID', fVersion: 'الإصدار', fStatus: 'الحالة', fType: 'النوع', fDrive: 'المحرك',
     fPath: 'المسار', fCachePath: 'مسار الذاكرة المؤقتة', fCacheSize: 'حجم الذاكرة المؤقتة', fCacheBuilt: 'أُنشئت الذاكرة المؤقتة',
     fBackport: 'الباكبورت', yes: 'نعم', no: 'لا', notBuilt: 'لم تُنشأ',
+    playgoStub: 'بديل PlayGo', playgoHint: 'أوقفه إذا بقيت اللعبة على شاشة سوداء، وشغّله إذا طلبت إكمال التنزيل.',
     szGame: 'اللعبة', szDlc: 'DLC', szSave: 'الحفظ', szCache: 'الذاكرة المؤقتة',
     szPart: '{part} {size}', szNa: '{part} غير متاح', szTotal: 'الإجمالي {size}',
     sizesNone: 'الأحجام غير متاحة', sizesLoading: 'جارٍ تحميل الأحجام...',
@@ -1911,6 +1926,11 @@ function renderModal() {
   // A duplicate shares the title id of the library copy: the API calls would act on that copy.
   $('m-rebuild').disabled = g.status === 'duplicate' || g.status === 'building';
   $('m-delete').disabled = g.status === 'duplicate';
+  // The PlayGo switch: only for a game whose eboot imports PlayGo, or one turned off already.
+  var pg = $('m-playgo');
+  $('m-playgo-row').hidden = !(g.playgo === true || g.playgo_off);
+  if (!pg._busy) pg.checked = !g.playgo_off;
+  pg.disabled = !!pg._busy || g.status === 'duplicate' || g.status === 'building';
 }
 function renderSizes(sizes) {
   var stack = $('m-stack'), legend = $('m-legend');
@@ -1970,6 +1990,29 @@ $('m-rebuild').onclick = function () {
   if (!g) return;
   ask(t('rebuildTitle', { name: gameName(g) }), t('rebuildText'), t('rebuildYes'),
     function () { post('/api/rebuild/' + encodeURIComponent(g.title_id)); });
+};
+$('m-playgo').onchange = async function () {
+  var box = this, g = openTid && findGame(openTid);
+  if (!g) return;
+  var id = gameId(g), on = box.checked;
+  box._busy = true;
+  box.disabled = true;
+  try {
+    var r = await fetch('/api/playgo/' + encodeURIComponent(g.title_id), { method: 'POST', body: on ? 'on' : 'off' });
+    if (!r.ok) throw new Error((await r.text()) || 'HTTP ' + r.status);
+    // Until the next state arrives, draw the new value.
+    g.playgo_off = !on;
+    modalActionError = '';
+    if (state && state.paused) { queued = true; setBanner('paused', true, pausedText); }
+  } catch (e) {
+    if (modalOpen() && openTid === id) modalActionError = e.message;
+  }
+  box._busy = false;
+  if (modalOpen() && openTid === id) {
+    renderModal();
+    if (!box.disabled && !$('m-playgo-row').hidden) box.focus();
+  }
+  schedule(300);
 };
 $('m-delete').onclick = function () {
   var g = openTid && findGame(openTid);
@@ -2269,8 +2312,13 @@ function moveInSettings(t, key) {
   else if (list[i + (key === 'ArrowUp' ? -1 : 1)]) list[i + (key === 'ArrowUp' ? -1 : 1)].focus();
   return true;
 }
+// The game sheet's controls in page order: its enabled buttons and the PlayGo switch when shown.
+function modalControls() {
+  return Array.prototype.slice.call(document.querySelectorAll('#modal button:not([disabled]), #modal input:not([disabled])'))
+    .filter(function (c) { return c.id !== 'm-playgo' || !$('m-playgo-row').hidden; });
+}
 function moveInModal(key) {
-  var list = Array.prototype.slice.call(document.querySelectorAll('#modal button:not([disabled])'));
+  var list = modalControls();
   var i = list.indexOf(document.activeElement);
   var d = key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 1;
   list[(i + d + list.length) % list.length].focus();
@@ -2303,7 +2351,7 @@ document.addEventListener('keydown', function (e) {
   if (modalOpen()) {
     if (k === 'Escape' || k === 'Backspace') { e.preventDefault(); closeModal(); return; }
     if (k === 'Tab') {
-      keepTabInside(e, Array.prototype.slice.call(document.querySelectorAll('#modal button:not([disabled])')));
+      keepTabInside(e, modalControls());
       return;
     }
     if (arrow && !PS) { e.preventDefault(); moveInModal(k); }

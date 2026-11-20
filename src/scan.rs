@@ -168,10 +168,13 @@ fn scan_error(result: &mut ScanResult, path: PathBuf, error: impl std::fmt::Disp
 /// Duplicate rule: a folder beats a pkg; within a kind the first source in scan order wins and
 /// the others go to `duplicates`. A source still being copied (`source` None) claims its title id
 /// the same way, so a mid-copy winner keeps the other copy out of the library (an unstable
-/// loser claims nothing); it itself goes only to `unstable`.
+/// loser claims nothing); it itself goes only to `unstable`. A `nested` source (one folder below
+/// a root, scanned after every root's own entries) never beats a holder: an old copy kept in a
+/// subfolder cannot take over a game that already runs from a root.
 fn claim<T>(seen: &mut HashMap<String, (bool, Option<usize>)>, games: &mut Vec<Option<T>>,
-            duplicates: &mut Vec<T>, tid: &str, pkg: bool, source: Option<T>) {
+            duplicates: &mut Vec<T>, tid: &str, pkg: bool, nested: bool, source: Option<T>) {
     match seen.get(tid) {
+        Some(_) if nested => duplicates.extend(source),
         // The holder wins unless it is a pkg and this is a folder.
         Some(&(held_pkg, _)) if !held_pkg || pkg => duplicates.extend(source),
         held => {
@@ -190,6 +193,65 @@ fn claim<T>(seen: &mut HashMap<String, (bool, Option<usize>)>, games: &mut Vec<O
 /// Last logged scan error per path.
 static LOGGED: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
 
+/// Sorted direct entries of `dir` without dot entries (macOS ._X.pkg AppleDouble files, as in
+/// SMP); None when `dir` is gone.
+fn list(dir: &Path, result: &mut ScanResult) -> Option<Vec<PathBuf>> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == ErrorKind::NotFound => return None,
+        Err(e) => {
+            scan_error(result, dir.to_path_buf(), e);
+            return None;
+        }
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) if entry.file_name().to_string_lossy().starts_with('.') => {}
+            Ok(entry) => paths.push(entry.path()),
+            Err(e) => scan_error(result, dir.to_path_buf(), e),
+        }
+    }
+    paths.sort();
+    Some(paths)
+}
+
+/// `backports` in any case: an exFAT drive finds `Backports` under that name too (backport_for).
+fn is_backports(path: &Path) -> bool {
+    path.file_name().is_some_and(|n| n.eq_ignore_ascii_case("backports"))
+}
+
+/// Candidate sources of one root: (its own entries sorted, the nested ones). Nested = the
+/// entries, sorted, of each subfolder that is not a game folder, not `backports` and not itself a
+/// root (SMP scan_depth=2). A path already in `listed` (this pass) is left out.
+/// ponytail: one level below a root only (SMP's default depth), and none below a drive root
+/// (/mnt/usbN, /mnt/extN): its homebrew and etaHEN/games are roots of their own, and walking
+/// every top folder of a drive (Movies/...) each pass costs too much on USB. A game two folders
+/// down, or in another folder at a drive's root, needs its own scanpath line.
+fn candidates(root: &Path, roots: &[String], listed: &mut HashSet<PathBuf>, result: &mut ScanResult) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let (mut top, mut nested) = (Vec::new(), Vec::new());
+    let drive_root = root.parent() == Some(Path::new("/mnt"));
+    for path in list(root, result).unwrap_or_default() {
+        if is_backports(&path) || !listed.insert(path.clone()) {
+            continue;
+        }
+        let descend = !drive_root && path.is_dir()
+            && !(path.join("eboot.bin").is_file() && path.join("sce_sys/param.json").is_file())
+            && !roots.iter().any(|r| Path::new(r) == path);
+        if descend {
+            for child in list(&path, result).unwrap_or_default() {
+                if !is_backports(&child) && listed.insert(child.clone()) {
+                    nested.push(child);
+                }
+            }
+        }
+        top.push(path);
+    }
+    (top, nested)
+}
+
+/// Finds the sources under `roots`: the .pkg files and game folders (eboot.bin and
+/// sce_sys/param.json) directly in a root, and those one folder below it (see `candidates`).
 pub fn scan(roots: &[String], backports: bool, stability_wait: u64) -> ScanResult {
     let mut result = ScanResult { games: Vec::new(), duplicates: Vec::new(), errors: Vec::new(), unstable: Vec::new() };
     // Title id -> (winner is a pkg, its index in `games`; None while the winner is still being copied).
@@ -197,105 +259,94 @@ pub fn scan(roots: &[String], backports: bool, stability_wait: u64) -> ScanResul
     // A slot is emptied when a later source beats it.
     let mut games: Vec<Option<Source>> = Vec::new();
     let cached = cached_sources();
+    // Every root's own entries first, in root order, then the nested ones: a nested copy never
+    // beats a source found directly in a root (claim).
+    let (mut listed, mut order, mut later) = (HashSet::new(), Vec::new(), Vec::new());
     for root in roots {
         let root = Path::new(root);
-        let entries = match fs::read_dir(root) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+        let (top, nested) = candidates(root, roots, &mut listed, &mut result);
+        order.extend(top.into_iter().map(|p| (root, p, false)));
+        later.extend(nested.into_iter().map(|p| (root, p, true)));
+    }
+    order.extend(later);
+    for (root, path, nested) in order {
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
             Err(e) => {
-                scan_error(&mut result, root.to_path_buf(), e);
+                scan_error(&mut result, path, e);
                 continue;
             }
         };
-        let mut paths = Vec::new();
-        for entry in entries {
-            match entry {
-                // Dot entries (macOS ._X.pkg AppleDouble files) are skipped, as in SMP.
-                Ok(entry) if entry.file_name().to_string_lossy().starts_with('.') => {}
-                Ok(entry) => paths.push(entry.path()),
-                Err(e) => scan_error(&mut result, root.to_path_buf(), e),
+        let (kind, size, param) = if metadata.is_file()
+            && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pkg")) {
+            // Before the pkg is opened: a half-copied header is not parsed. The title id is
+            // the one of an earlier cache of this path, if any.
+            if let Some(age) = still_written(std::slice::from_ref(&path), stability_wait) {
+                let tid = cached.get(&path).cloned();
+                if let Some(t) = &tid {
+                    claim(&mut seen, &mut games, &mut result.duplicates, t, true, nested, None);
+                }
+                skip_unstable(&mut result, path, tid, age);
+                continue;
             }
-        }
-        paths.sort();
-        for path in paths {
-            let metadata = match fs::metadata(&path) {
-                Ok(metadata) => metadata,
+            let mtime = match metadata.modified() {
+                Ok(mtime) => mtime,
                 Err(e) => {
                     scan_error(&mut result, path, e);
                     continue;
                 }
             };
-            let (kind, size, param) = if metadata.is_file()
-                && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pkg")) {
-                // Before the pkg is opened: a half-copied header is not parsed. The title id is
-                // the one of an earlier cache of this path, if any.
-                if let Some(age) = still_written(std::slice::from_ref(&path), stability_wait) {
-                    let tid = cached.get(&path).cloned();
-                    if let Some(t) = &tid {
-                        claim(&mut seen, &mut games, &mut result.duplicates, t, true, None);
-                    }
-                    skip_unstable(&mut result, path, tid, age);
-                    continue;
+            let param = match cached_param(&cached, &path, metadata.len(), mtime) {
+                Some(p) => Ok(p),
+                None => pkg_param(&path, metadata.len(), mtime),
+            };
+            (Kind::Pkg, metadata.len(), param)
+        } else if metadata.is_dir() && !is_backports(&path)
+            && path.join("eboot.bin").is_file() && path.join("sce_sys/param.json").is_file() {
+            // ponytail: only the folder itself, sce_sys/, its param.json and eboot.bin are checked, so
+            // a big file deep inside can still be in flight; a full walk per pass costs too much on USB.
+            let probe = [path.clone(), path.join("sce_sys"), path.join("sce_sys/param.json"), path.join("eboot.bin")];
+            if let Some(age) = still_written(&probe, stability_wait) {
+                // A param.json mid-copy does not parse: the title id of an earlier cache of this path.
+                let tid = fs::read(path.join("sce_sys/param.json")).ok()
+                    .and_then(|json| parse_param(&json).ok()).map(|(tid, _, _)| tid)
+                    .or_else(|| cached.get(&path).cloned());
+                if let Some(t) = &tid {
+                    claim(&mut seen, &mut games, &mut result.duplicates, t, false, nested, None);
                 }
-                let mtime = match metadata.modified() {
-                    Ok(mtime) => mtime,
-                    Err(e) => {
-                        scan_error(&mut result, path, e);
-                        continue;
-                    }
-                };
-                let param = match cached_param(&cached, &path, metadata.len(), mtime) {
-                    Some(p) => Ok(p),
-                    None => pkg_param(&path, metadata.len(), mtime),
-                };
-                (Kind::Pkg, metadata.len(), param)
-            } else if metadata.is_dir() && path.file_name().is_some_and(|n| n != "backports")
-                && path.join("eboot.bin").is_file() && path.join("sce_sys/param.json").is_file() {
-                // ponytail: only the folder itself, sce_sys/, its param.json and eboot.bin are checked, so
-                // a big file deep inside can still be in flight; a full walk per pass costs too much on USB.
-                let probe = [path.clone(), path.join("sce_sys"), path.join("sce_sys/param.json"), path.join("eboot.bin")];
-                if let Some(age) = still_written(&probe, stability_wait) {
-                    // A param.json mid-copy does not parse: the title id of an earlier cache of this path.
-                    let tid = fs::read(path.join("sce_sys/param.json")).ok()
-                        .and_then(|json| parse_param(&json).ok()).map(|(tid, _, _)| tid)
-                        .or_else(|| cached.get(&path).cloned());
-                    if let Some(t) = &tid {
-                        claim(&mut seen, &mut games, &mut result.duplicates, t, false, None);
-                    }
-                    skip_unstable(&mut result, path, tid, age);
-                    continue;
-                }
-                let packing = if path.join("ampr_zstd.index").is_file() {
-                    Packing::Zstd
-                } else if path.join("ampr_assets.index").is_file() {
-                    Packing::Lz4
-                } else {
-                    Packing::Plain
-                };
-                (Kind::Folder(packing), 0, fs::read(path.join("sce_sys/param.json"))
-                    .and_then(|json| parse_param(&json)).map_err(|e| e.to_string()))
+                skip_unstable(&mut result, path, tid, age);
+                continue;
+            }
+            let packing = if path.join("ampr_zstd.index").is_file() {
+                Packing::Zstd
+            } else if path.join("ampr_assets.index").is_file() {
+                Packing::Lz4
             } else {
-                continue;
+                Packing::Plain
             };
-            let (title_id, title_name, version) = match param {
-                Ok(param) => param,
-                Err(e) => {
-                    scan_error(&mut result, path, e);
-                    continue;
-                }
-            };
-            if !valid_tid(&title_id) {
-                scan_error(&mut result, path, format!("invalid title id {title_id:?}"));
+            (Kind::Folder(packing), 0, fs::read(path.join("sce_sys/param.json"))
+                .and_then(|json| parse_param(&json)).map_err(|e| e.to_string()))
+        } else {
+            continue;
+        };
+        let (title_id, title_name, version) = match param {
+            Ok(param) => param,
+            Err(e) => {
+                scan_error(&mut result, path, e);
                 continue;
             }
-            let source = Source {
-                drive: crate::storage::drive_of(&path),
-                backport: if backports { backport_for(root, roots, &title_id) } else { None },
-                path, kind, title_id, title_name, version, size,
-            };
-            let (tid, pkg) = (source.title_id.clone(), source.kind == Kind::Pkg);
-            claim(&mut seen, &mut games, &mut result.duplicates, &tid, pkg, Some(source));
+        };
+        if !valid_tid(&title_id) {
+            scan_error(&mut result, path, format!("invalid title id {title_id:?}"));
+            continue;
         }
+        let source = Source {
+            drive: crate::storage::drive_of(&path),
+            backport: if backports { backport_for(root, roots, &title_id) } else { None },
+            path, kind, title_id, title_name, version, size,
+        };
+        let (tid, pkg) = (source.title_id.clone(), source.kind == Kind::Pkg);
+        claim(&mut seen, &mut games, &mut result.duplicates, &tid, pkg, nested, Some(source));
     }
     result.games = games.into_iter().flatten().collect();
     result.games.sort_by(|a, b| a.title_name.cmp(&b.title_name));

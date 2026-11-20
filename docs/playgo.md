@@ -28,7 +28,7 @@ Look in `/data/krakenmount/kraken.log` for a line like this:
 ```
 
 If a game has no such line, its `eboot.bin` did not match, the game already has its own file, or
-`add_emulators` is off.
+`add_emulators` is off, or the stub is turned off for that game (`playgo_off`).
 
 ## Optional config: playgo_stub.dat
 
@@ -60,7 +60,18 @@ The upstream README lists every language name and the fallback for each invalid 
 Put your own `libScePlayGo.sprx` into the game's `fakelib/`. Kraken Mount sees that the game ships one
 and leaves it alone.
 
-## Turn it off
+## Turn it off for one game
+
+Open the game's details in the web UI and clear "PlayGo stub". The switch is shown when the game's
+`eboot.bin` imports PlayGo, or when the stub is already off for it. Turn it off if the game stays on a
+black screen with the stub; turn it back on if the game asks you to finish the download.
+
+Kraken Mount stores the choice in `/data/krakenmount/config.toml` as a list of title IDs,
+`playgo_off = ["PPSA01556"]`, and refreshes the game's `fakelib/`. For a title in the list the bundled
+stub is neither added nor upgraded (log line `fakelib: PlayGo stub off (playgo_off)`); a
+`libScePlayGo.sprx` that the game or backport ships stays as it is. The DLC emulator is not affected.
+
+## Turn it off for all games
 
 Set `add_emulators = false` in `/data/krakenmount/config.toml`, or clear the "Add the bundled DLC
 (dlc_emu) and PlayGo (pgo_stub) emulators" checkbox in the web UI. This also turns off the bundled DLC

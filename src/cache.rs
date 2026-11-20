@@ -3,7 +3,7 @@
 //! mounts the pkg's folder there), the two AMPR indexes; `.done` (JSON stamp, mtime = build start) last.
 //! fakelib/ (both kinds) = the game's or backport's libs, then /data/krakenmount/ampr/* copied on
 //! top (inject_ampr; always for a pkg); in between, the bundled DLC (dlc_emu) and PlayGo (pgo_stub)
-//! emulators when the game needs one and ships none (add_emulators). A change of the ampr files,
+//! emulators when the game needs one and ships none (add_emulators; no pgo_stub for playgo_off). A change of the ampr files,
 //! inject_ampr or the emulator inputs only recomposes fakelib/ (refresh_fakelib), no full rebuild.
 //! /app0 is writable: files the game writes here stay across rebuilds (`.built` lists what a build
 //! made, a rebuild removes only that); purge() deletes them too.
@@ -674,7 +674,20 @@ fn emu_state(src: &Source, s: &Settings) -> serde_json::Value {
         "pgo_stub": PGO_STUB_VERSION.trim(),
         "dlc_ini": dlc_ini_on_disk(src),
         "eboot": eboot,
+        "playgo_off": playgo_off(src, s),
     })
+}
+
+/// Whether the PlayGo stub is turned off for this title (the playgo_off setting).
+fn playgo_off(src: &Source, s: &Settings) -> bool {
+    s.playgo_off.iter().any(|t| *t == src.title_id)
+}
+
+/// The memoized "the eboot imports PlayGo" (AMPR_STATE "playgo"[2]) of title `tid`; None when unknown.
+/// ponytail: the memo as last written, not checked against the eboot now.
+pub fn playgo_import(tid: &str) -> Option<bool> {
+    let b = fs::read(dir(tid).join(AMPR_STATE)).ok()?;
+    serde_json::from_slice::<serde_json::Value>(&b).ok()?["playgo"][2].as_bool()
 }
 
 /// The AMPR_STATE contents for `src` now.
@@ -795,7 +808,7 @@ pub fn check(src: &Source, s: &Settings) -> Fresh {
     // Only "ampr" and "emus" count: the "playgo" memo never triggers a refresh.
     let new = fakelib_state(src, s);
     if ["ampr", "emus"].iter().any(|&k| had.get(k) != new.get(k)) {
-        return Fresh::Fakelib(format!("{AMPR_DIR}, inject_ampr or the bundled emulators changed"));
+        return Fresh::Fakelib(format!("{AMPR_DIR}, inject_ampr, the bundled emulators or playgo_off changed"));
     }
     Fresh::Fresh
 }
@@ -836,8 +849,9 @@ fn loose(path: String, size: u64) -> IndexFile {
 /// upgraded when it is a known older release (OLD_EMUS), else left alone; a missing one is added
 /// when wanted (dlc_emu: `dlc`; pgo_stub: `playgo()`, called only then). The dlc_emu set is one
 /// unit: if any of its files is not a known older release, none of the three is touched (no mixed
-/// set). pgo_stub goes per file.
-fn add_emus(tid: &str, fakelib: &Path, dlc: bool, mut playgo: impl FnMut() -> bool) -> Result<()> {
+/// set). pgo_stub goes per file; with `pgo_off` it is skipped entirely (not added, not upgraded),
+/// so a libScePlayGo.sprx the game or backport ships stays as shipped.
+fn add_emus(tid: &str, fakelib: &Path, dlc: bool, pgo_off: bool, mut playgo: impl FnMut() -> bool) -> Result<()> {
     // Per entry: None = missing, Some((path, known old, the bundled file itself)).
     let found: Vec<_> = EMUS.iter().map(|&(name, data, ..)| find_ci(fakelib, name).map(|p| {
         let old = old_emu_file(&p, name);
@@ -853,9 +867,20 @@ fn add_emus(tid: &str, fakelib: &Path, dlc: bool, mut playgo: impl FnMut() -> bo
         if is_dlc && dlc_kept {
             continue;
         }
+        if !is_dlc && pgo_off {
+            log!("{tid}: fakelib: PlayGo stub off (playgo_off)");
+            continue;
+        }
         let version = if is_dlc { DLC_EMU_VERSION } else { PGO_STUB_VERSION }.trim();
         let (dest, what) = match f {
-            Some((have, true, _)) => (have, "upgraded"),
+            // pgo_stub: playgo() only fills the import memo here (an old stub is upgraded either
+            // way), so the UI offers the per-game switch for this game too.
+            Some((have, true, _)) => {
+                if !is_dlc {
+                    playgo();
+                }
+                (have, "upgraded")
+            }
             Some(_) => continue,
             // The eboot is read only when still needed.
             None if (if is_dlc { dlc } else { playgo() }) => (fakelib.join(name), "added"),
@@ -872,7 +897,7 @@ fn add_emus(tid: &str, fakelib: &Path, dlc: bool, mut playgo: impl FnMut() -> bo
 /// extracted from `pkg`; folder: copied), all of it but libSceSaveData.native.sprx; libkernel.sprx
 /// never; then each bundled emulator (EMUS) the game needs and fakelib/ lacks (add_emulators: the
 /// DLC set for a dlc_emu.ini at the game or backport root, pgo_stub for a PlayGo import in
-/// eboot.bin, memoized in AMPR_STATE), never over a file of that name unless it is a known older
+/// eboot.bin, memoized in AMPR_STATE, none for a title in playgo_off), never over a file of that name unless it is a known older
 /// release (add_emus: OLD_EMUS, then upgraded; the dlc_emu set as one unit); then the ampr files on
 /// top (inject_ampr, always for a pkg), except over the game's own newer ampr-emu-ng. All 0777.
 /// Writes AMPR_STATE. Freshness needs no new state: the game's libs
@@ -920,7 +945,7 @@ fn compose_fakelib(src: &Source, s: &Settings, pkg: Option<(&Io, &Pkg)>) -> Resu
     if s.add_emulators {
         let dlc = dlc_ini_on_disk(src)
             || pkg.is_some_and(|(_, p)| p.files().any(|e| !e.is_dir && e.path == DLC_INI));
-        add_emus(&src.title_id, &fakelib, dlc, || wants_playgo_memo(src, &had, &mut state))?;
+        add_emus(&src.title_id, &fakelib, dlc, playgo_off(src, s), || wants_playgo_memo(src, &had, &mut state))?;
     }
     if injects_ampr(src, s) {
         // No ng downgrade: the game's own newer ampr-emu-ng stays.
