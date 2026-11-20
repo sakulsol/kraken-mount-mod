@@ -251,6 +251,8 @@ struct Session {
     cleanup: Option<(u64, u64)>,
     /// After an exit: the overlay is kept until this now_ms while it stays on top of common/lib.
     grace: Option<u64>,
+    /// Exits whose crash dump was not there yet: (pid, exit status, now_ms), looked for again at the end.
+    exits: Vec<(libc::pid_t, String, u64)>,
 }
 
 impl Session {
@@ -263,6 +265,18 @@ impl Session {
         }
         Session {
             tid: tid.to_string(), lib: None, srcs, layers: Vec::new(), data: Vec::new(), pid: None, cleanup: None, grace: None,
+            exits: Vec::new(),
+        }
+    }
+
+    /// The session's end: the second and last look for the dumps not there at exit.
+    fn recheck_exits(&self) {
+        let now = now_ms();
+        for (pid, status, at) in &self.exits {
+            let when = format!("{} ms after exit", now.saturating_sub(*at));
+            if !crate::crash::check(&self.tid, *pid, status, &when) && status.starts_with("killed") {
+                tlog!("{} pid={pid} {status}; no crash dump in {} {when}", self.tid, crate::crash::DIR);
+            }
         }
     }
 
@@ -581,7 +595,7 @@ pub fn watch(titles: Arc<Mutex<HashSet<String>>>, running: Arc<Mutex<HashSet<Str
                     w.on_exec(pid);
                 }
                 if e.fflags & libc::NOTE_EXIT as u32 != 0 {
-                    w.on_exit(pid);
+                    w.on_exit(pid, e.data as i32);
                 }
             }
         }
@@ -703,6 +717,7 @@ impl Watcher {
         self.running.lock().unwrap().insert(tid.to_string());
         if let Some(mut old) = self.sessions.remove(name) {
             tlog!("{tid} stale session on {name}, unmounting it first");
+            old.recheck_exits();
             old.unmount_pass(false);
         }
         let mut s = Session::new(tid);
@@ -845,11 +860,15 @@ impl Watcher {
     }
 
     /// Strategy 3: the game exited, unmount so ShellCore can tear the sandbox down.
-    fn on_exit(&mut self, pid: libc::pid_t) {
+    fn on_exit(&mut self, pid: libc::pid_t, status: i32) {
         self.pending.retain(|p| p.0 != pid);
         let now = now_ms();
+        let status = crate::crash::exit_status(status);
         for (name, s) in self.sessions.iter_mut().filter(|(_, s)| s.pid == Some(pid)) {
-            tlog!("{} exit pid={pid} sandbox={name}", s.tid);
+            tlog!("{} exit pid={pid} sandbox={name}: {status}", s.tid);
+            if !crate::crash::check(&s.tid, pid, &status, "at exit") {
+                s.exits.push((pid, status.clone(), now));
+            }
             // Our nullfs mounts inside the sandbox block ShellCore's teardown (the close hangs, then the
             // console powers off): they go now. Only the overlay waits for an exit-spawned ELF.
             let wait = match s.unmount_data(0) {
@@ -910,6 +929,7 @@ impl Watcher {
         }
         for name in done {
             if let Some(s) = self.sessions.remove(&name) {
+                s.recheck_exits();
                 // SMP sm_game_lifecycle.c: the system rewrites snd0info while a title runs.
                 // On its own thread: a busy app.db must not hold the watcher up to 3 s.
                 crate::register::spawn_snd0info(&s.tid, 0);

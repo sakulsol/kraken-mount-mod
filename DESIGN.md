@@ -285,6 +285,19 @@ still mounted. A later copy of the payload adopts the overlay, `/data`, USB and 
 When a session's cleanup ends, `register::spawn_snd0info(<TID>, 0)` (own thread).
 No overlay when neither layer applies.
 
+## Crash report (`src/crash.rs`)
+When an app crashes, the console writes `/user/devlog/system/sce_coredumps.0/<TID>_<n>/` (also seen as
+`/devlog/...`) with `prosperocore-<n>-0x<pid>-<process>.prosperodmp` inside, and deletes the folder
+seconds later. No thread or watch of its own: the launch watcher's NOTE_EXIT for a game we mounted (an
+exit-spawned ELF included) logs the exit status from the event's data on the `exit pid=...` line
+(`exited with N` or `killed by signal N`), then reads that folder once for `<TID>_*` folders holding a
+dump with that pid. If none is there yet, it looks once more when that session's cleanup ends (0.4 to
+3 s later), and logs `pid=... killed by signal N; no crash dump ...` when a killed game left none. A
+match logs `<TID>: crashed (<process>, <status>), dump found at exit|<ms> ms after exit; the console's
+crash dump: <folder path>` and is kept as the title's last crash in `/data/krakenmount/crashes.json`
+(`{"<TID>": {at, process, folder, status}}`, temp file + rename), so it survives a payload restart or a
+reboot. Not in the game's cache: for a pkg the cache is /app0, so the game would see the file.
+
 ## Module interfaces (contract between modules; keep these names)
 ```rust
 // config.rs
@@ -378,8 +391,14 @@ If a newer copy took the port meanwhile, this copy quits (not while a game runs)
 - `GET /api/state`:
   `{version, busy, paused, waiting:"kstuff"|"shadowmount"|null, running:[TID], games:[{title_id, title_name, version, path, kind:"pkg"|"folder", packing:"plain"|"zstd"|"lz4"|null,
   drive, size, status:"pending"|"checking"|"building"|"ready"|"error"|"duplicate", error, cache_size, cache_built, backport,
-  playgo: bool|null (the memoized "eboot imports PlayGo", null when unknown or `add_emulators` is off), playgo_off: bool (false while `add_emulators` is off)}],
+  playgo: bool|null (the memoized "eboot imports PlayGo", null when unknown or `add_emulators` is off), playgo_off: bool (false while `add_emulators` is off),
+  crash: {at, process, status}|null (the last crash, from crashes.json, see Crash report)}],
   drives:[{mount, label, kind, total, free, ejectable}], cache:{path, size, free, low_space, ampr_present}, log:[last 100 lines of the last 64 KiB]}`
+- `GET /api/report/<TID>` -> plain text for an issue: Kraken Mount version, a firmware line to fill in,
+  the game (name, title id, version, source, kind, drive, status and error), ampr-emu-ng (`/api/ampr`
+  kind and version), the PlayGo stub (on, off, or not added), the last crash, and the last 40 lines of
+  the log tail (64 KiB) that contain the title id; 404 for an invalid or absent library title.
+  The game sheet's Report button opens it.
 - `GET /api/settings` -> settings JSON; `POST /api/settings` (JSON body) -> save, apply, rescan; a body
   without `playgo_off` keeps the current list (the settings form does not send it).
 - `POST /api/playgo/<TID>`, body exactly `on` or `off` -> removes the title from / adds it to `playgo_off`,
