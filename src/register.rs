@@ -41,8 +41,8 @@ fn patch_param_json(buf: &mut Vec<u8>) -> bool {
     true
 }
 
-/// One staged file: overwritten when present, then 0666, since fs::copy keeps the source's mode
-/// and a 0600 file from a game folder would stay unreadable for the trophy and save services.
+/// One staged file: overwritten when present, then 0666, since a 0600 file from a game folder
+/// would stay unreadable for the trophy and save services.
 /// A file named param.json gets patch_param_json (only these staged copies, never the game's).
 fn copy_file(title_id: &str, src: &Path, dst: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -54,9 +54,25 @@ fn copy_file(title_id: &str, src: &Path, dst: &Path) -> io::Result<()> {
             log!("{title_id}: param.json patched: {}", dst.display());
         }
     } else {
-        fs::copy(src, dst)?;
+        copy_bytes(src, dst)?;
     }
     fs::set_permissions(dst, fs::Permissions::from_mode(0o666))
+}
+
+/// fs::copy 1 MiB at a time. On FreeBSD std's fs::copy is a read/write loop with an 8 KiB
+/// buffer: staging sce_sys and appmeta (pic*.png/pic*.dds, ~80 MB) took 16-24 s per game.
+fn copy_bytes(src: &Path, dst: &Path) -> io::Result<()> {
+    use std::io::{Read, Write};
+    let (mut r, mut w) = (fs::File::open(src)?, fs::File::create(dst)?);
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        match r.read(&mut buf) {
+            Ok(0) => return Ok(()),
+            Ok(n) => w.write_all(&buf[..n])?,
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Recursive copy, like SMP copy_dir: existing files are overwritten.
