@@ -41,16 +41,12 @@ extern "C" {
     fn sceKernelGetAppInfo(pid: libc::pid_t, info: *mut AppInfo) -> i32;
 }
 
-/// Monotonic milliseconds (CLOCK_MONOTONIC, since boot): the timestamp on every log line here.
-fn now_ms() -> u64 {
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
-    ts.tv_sec as u64 * 1000 + ts.tv_nsec as u64 / 1_000_000
-}
+use crate::sys::uptime_ms as now_ms;
 
+/// Every log line already carries the milliseconds since boot (sys::log_line).
 macro_rules! tlog {
     ($($arg:tt)*) => {
-        log!("[launch {}] {}", now_ms(), format!($($arg)*))
+        log!("[launch] {}", format!($($arg)*))
     };
 }
 

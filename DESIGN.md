@@ -27,7 +27,7 @@ only into a cache's `fakelib/`, never into `/data/krakenmount/ampr/`.
 | `/data/krakenmount/caches/<TID>/` | per-game cache |
 | `/data/krakenmount/ampr.bundled` | `<version> <len> <crc32>` of the `libSceAmpr.sprx` we last wrote, bundled or downloaded (v0.4.0 builds wrote `<len> <crc32>`: ours, version unknown; outside `ampr/`, whose files all go into fakelib) |
 | `/data/krakenmount/ampr/` | ampr-emu-ng files (`libSceAmpr.sprx`, ...), copied on top of every game's `fakelib/` in its cache (chmod 0777 at start; a `libkernel.sprx` there is never copied and logs a warning) |
-| `/data/krakenmount/kraken.log` | log (setting `log`); starts over past 1 MiB, no kept copy |
+| `/data/krakenmount/kraken.log` | log (setting `log`); each line starts with the UTC time and the milliseconds since boot (`2026-11-19 20:51:03Z [10643021] `); starts over past 1 MiB, no kept copy |
 | `/data/krakenmount/kraken-mount.elf` | self copy the tile starts (Dump Forge style, below) |
 
 ## Drives and scan roots (`src/storage.rs`)

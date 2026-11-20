@@ -19,7 +19,29 @@ const LOG_MAX: u64 = 1 << 20;
 /// config load; true until the first one, so start-up problems are logged.
 pub static LOG_FILE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
+/// Milliseconds since boot (CLOCK_MONOTONIC).
+pub fn uptime_ms() -> u64 {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    ts.tv_sec as u64 * 1000 + ts.tv_nsec as u64 / 1_000_000
+}
+
+/// The start of every log line: the UTC time and the milliseconds since boot,
+/// `2026-11-19 20:51:03Z [10643021] `.
+fn stamp() -> String {
+    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let wall = if unsafe { libc::gmtime_r(&now, &mut tm) }.is_null() {
+        "????-??-?? ??:??:??Z".to_string()
+    } else {
+        format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}Z", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                tm.tm_hour, tm.tm_min, tm.tm_sec)
+    };
+    format!("{wall} [{}] ", uptime_ms())
+}
+
 pub fn log_line(line: &str) {
+    let line = stamp() + line;
     // Serialized, so two threads never rotate at once. A poisoned lock still logs.
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());

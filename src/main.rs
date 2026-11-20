@@ -102,7 +102,9 @@ fn build_and_register(state: &State, s: &Settings, src: &Source, fresh: &Fresh, 
     }
     // Once per run per title: build_and_register runs only for titles not registered in this run.
     cache::fix_access(src);
+    let t0 = std::time::Instant::now();
     register::register(tid, &app0, &cache::sce_sys(src), backport_of(src))?;
+    log!("{tid}: registered in {} ms", t0.elapsed().as_millis());
     Ok(true)
 }
 
@@ -546,6 +548,9 @@ fn prepare_ampr() {
     }
 }
 
+/// A scan pass that takes at least this long is logged with its timing.
+const SLOW_PASS_MS: u128 = 1000;
+
 /// ShadowMountPlus's process name (SMP main.c PAYLOAD_NAME): it registers and mounts the same titles.
 const SMP_PROCESS: &str = "shadowmountplus.elf";
 
@@ -743,12 +748,14 @@ fn main() {
         }
         // Held to the end of the pass (dropped at `continue` and before the wait): /api/delete waits on it.
         let work = state.work.lock().unwrap();
+        let pass = std::time::Instant::now();
         let s = config::load();
         sys::LOG_FILE.store(s.log, Ordering::Relaxed);
         *state.settings.lock().unwrap() = s.clone();
         state.busy.store(true, Ordering::SeqCst);
         let roots = if s.scan_paths.is_empty() { storage::default_scan_roots() } else { s.scan_paths.clone() };
         let r = scan::scan(&roots, s.backports, s.stability_wait_secs);
+        let scan_ms = pass.elapsed().as_millis();
         if state.paused() {
             continue;
         }
@@ -794,6 +801,11 @@ fn main() {
         full_pass |= full;
         *state.cache_total.lock().unwrap() = cache::total_size();
         check_space(&state, &s);
+        // A quick pass every scan_interval would flood the log: only a slow one is logged.
+        let pass_ms = pass.elapsed().as_millis();
+        if pass_ms >= SLOW_PASS_MS {
+            log!("scan pass: {} games in {pass_ms} ms (scan {scan_ms} ms)", r.games.len());
+        }
         state.busy.store(false, Ordering::SeqCst);
         drop(work);
         state.wait(Duration::from_secs(s.scan_interval_secs));

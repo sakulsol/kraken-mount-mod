@@ -955,6 +955,7 @@ pub fn refresh_fakelib(src: &Source, s: &Settings) -> Result<()> {
 pub fn build(src: &Source, s: &Settings) -> Result<()> {
     let d = dir(&src.title_id);
     log!("{}: building cache {} from {}", src.title_id, d.display(), src.path.display());
+    let t0 = std::time::Instant::now();
     let mut before = HashSet::new();
     let r = (|| {
         // Keep the dir: /system_ex/app/<TID> is a nullfs of this exact directory, and deleting it
@@ -965,6 +966,9 @@ pub fn build(src: &Source, s: &Settings) -> Result<()> {
         before = walk(&d).into_iter().map(|e| e.0).collect();
         build_inner(src, s, &before)
     })();
+    if r.is_ok() {
+        log!("{}: cache built in {:.1} s", src.title_id, t0.elapsed().as_secs_f64());
+    }
     r.map_err(|e| {
         let e = Error::new(e.kind(), format!("{} ({}): cache build: {e}", src.title_id, src.path.display()));
         log!("{e}");
