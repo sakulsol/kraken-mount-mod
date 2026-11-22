@@ -157,14 +157,48 @@ pub fn take_port() -> Option<TcpListener> {
 
 /// Listens on 0.0.0.0:PORT forever, one short-lived thread per connection. Once bound, registers
 /// the home-screen tile that opens the UI (once, in its own thread).
-pub fn serve(state: Arc<State>, listener: TcpListener) {
+pub fn serve(state: Arc<State>, mut listener: TcpListener) {
     log!("web UI on port {PORT}");
     std::thread::spawn(|| crate::register::register_tile(PORT));
-    for conn in listener.incoming().flatten() {
-        let state = state.clone();
-        std::thread::spawn(move || {
-            let _ = handle(&state, conn);
-        });
+    loop {
+        match listener.accept() {
+            Ok((conn, _)) => {
+                let state = state.clone();
+                std::thread::spawn(move || {
+                    let _ = handle(&state, conn);
+                });
+            }
+            Err(e) => {
+                // Rest mode can close the listening socket (#110: after a wake the UI was gone and a
+                // second copy could bind the port). ponytail: any accept error rebinds (a transient one
+                // only drops the backlog); a dead socket whose accept blocks without an error is not seen.
+                log!("web: accept on port {PORT} failed: {e}; binding it again");
+                drop(listener);
+                listener = rebind(&state);
+                log!("web UI on port {PORT} again");
+            }
+        }
+    }
+}
+
+/// Binds PORT again, retrying every second. A newer copy that took the port meanwhile wins: this
+/// one quits, unless a game runs (its overlay would stay mounted; /api/quit refuses then too).
+fn rebind(state: &State) -> TcpListener {
+    let mut logged = false;
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+        match TcpListener::bind(("0.0.0.0", PORT)) {
+            Ok(l) => return l,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && !state.paused() => {
+                log!("web: port {PORT} taken by another copy; quitting");
+                std::process::exit(0)
+            }
+            Err(e) if !logged => {
+                logged = true;
+                log!("web: bind port {PORT} failed: {e}; retrying every second");
+            }
+            Err(_) => {}
+        }
     }
 }
 

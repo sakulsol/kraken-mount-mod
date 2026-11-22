@@ -364,6 +364,8 @@ pub fn https_get(url: &str, max: usize) -> std::io::Result<Vec<u8>>;
 ```
 
 ## Web API (`src/web.rs`, port 8097, served to `src/ui.html`)
+Rest mode can close the listening socket: on an accept error the server binds port 8097 again every second.
+If a newer copy took the port meanwhile, this copy quits (not while a game runs).
 - `GET /` ui.html (`__VERSION__` filled in); `GET /app-icon.png` the app icon (`ps5/icon0.png`);
   `GET /kraken.appcache` the AppCache manifest (version + page hash). These three are `no-cache`,
   the rest `no-store`.
