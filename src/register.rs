@@ -409,9 +409,19 @@ pub fn install_all(title_ids: &[String]) -> io::Result<()> {
     let t = std::time::Instant::now();
     let rc = unsafe { sceAppInstUtilAppInstallAll(ptr::null_mut()) } as u32;
     let ms = t.elapsed().as_millis();
-    log!("{}: {why}; sceAppInstUtilAppInstallAll: {rc:#x} ({ms} ms)", title_ids.join(", "));
+    // Taken either way: a failed tile keeps tile.ok "pending" and is retried at the next start, so a
+    // failing call does not repeat (~20 s) every pass.
+    let tile = TILE_STAGED.lock().unwrap().take();
+    let ids: Vec<&str> = title_ids.iter().map(String::as_str).chain(tile.as_ref().map(|_| TILE_ID)).collect();
+    log!("{}: {why}; sceAppInstUtilAppInstallAll: {rc:#x} ({ms} ms)", ids.join(", "));
     if rc != 0 {
         return Err(err(format!("sceAppInstUtilAppInstallAll: {rc:#x}")));
+    }
+    if let Some(hash) = tile {
+        match fs::write(TILE_MARKER, format!("{hash}\n")) {
+            Ok(()) => log!("tile {TILE_ID}: registered"),
+            Err(e) => log!("tile {TILE_ID}: registered, but write {TILE_MARKER} failed: {e}"),
+        }
     }
     for tid in title_ids {
         spawn_snd0info(tid, 200);
@@ -573,10 +583,17 @@ fn mount_inner(title_id: &str, app0: &Path, backport: Option<&Path>, keep_active
 /// ps5-dump-forge tile.rs). Only sce_sys is written, as dump-forge does: no appmeta, no
 /// /system_ex, no eboot.
 const TILE_ID: &str = "KRKN00001";
-/// Marks /user/app/KRKN00001 as ours: "pending" while not yet registered, else the param.json
-/// hash of the last successful registration.
+/// "pending" while not yet registered, else the param.json hash of the last successful registration.
 const TILE_MARKER: &str = "/data/krakenmount/tile.ok";
 const TILE_ICON: &[u8] = include_bytes!("../ps5/icon0.png");
+/// FW 12+ (no TitleDir): the param.json hash of a tile staged in /user/app, waiting for the scan
+/// pass's `install_all` (InstallAll registers it with every other /user/app folder).
+static TILE_STAGED: Mutex<Option<String>> = Mutex::new(None);
+
+/// A staged tile waits for `install_all`: the scan pass calls it even with no game staged.
+pub fn tile_staged() -> bool {
+    TILE_STAGED.lock().unwrap().is_some()
+}
 
 fn tile_param_json(port: u16) -> Vec<u8> {
     let param = serde_json::json!({
@@ -610,16 +627,27 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<bool> {
     Ok(true)
 }
 
+/// Rows of the tile in app.db's tbl_contentinfo (SMP's title list table); None when app.db
+/// cannot be queried (logged).
+fn tile_in_app_db() -> Option<bool> {
+    const SQL: &str = "SELECT COUNT(*) FROM tbl_contentinfo WHERE titleId = ?1";
+    let (path, sql, tid) = (CString::new(APP_DB).ok()?, CString::new(SQL).ok()?, CString::new(TILE_ID).ok()?);
+    let mut msg = [0 as c_char; 256];
+    let _guard = APP_DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let rows = unsafe { km_sqlite_exec1(path.as_ptr(), sql.as_ptr(), tid.as_ptr(), msg.as_mut_ptr(), msg.len()) };
+    if rows < 0 {
+        let e = unsafe { CStr::from_ptr(msg.as_ptr()) }.to_string_lossy();
+        log!("tile {TILE_ID}: query {APP_DB} failed: {e}; trusting {TILE_MARKER}");
+        return None;
+    }
+    Some(rows > 0)
+}
+
+/// Registers the tile when tile.ok lacks the current param.json hash, a file changed, or app.db
+/// has no row for it (a wiped /data/krakenmount, or the system dropped it).
 fn ensure_tile(port: u16) -> io::Result<String> {
     let app_dir = Path::new(APP_BASE).join(TILE_ID);
     let marker = fs::read_to_string(TILE_MARKER).ok().map(|s| s.trim().to_string());
-    if marker.is_none() && fs::symlink_metadata(&app_dir).is_ok() {
-        return Ok(format!("{} exists without {TILE_MARKER}; left alone", app_dir.display()));
-    }
-    if marker.is_none() {
-        // Claim the folder before creating it, so a failed registration is retried.
-        ctx(fs::write(TILE_MARKER, "pending\n"), || format!("write {TILE_MARKER}"))?;
-    }
     let sys = app_dir.join("sce_sys");
     ctx(fs::create_dir_all(&sys), || format!("mkdir {}", sys.display()))?;
     let param = tile_param_json(port);
@@ -630,10 +658,19 @@ fn ensure_tile(port: u16) -> io::Result<String> {
             written.push(name);
         }
     }
-    if written.is_empty() && marker.as_deref() == Some(hash.as_str()) {
+    // ponytail: app.db unreadable = trust the marker, so a FW 12+ start does not pay ~20 s for nothing.
+    let in_db = tile_in_app_db();
+    if written.is_empty() && marker.as_deref() == Some(hash.as_str()) && in_db != Some(false) {
         return Ok(format!("up to date (port {port})"));
     }
+    if in_db == Some(false) {
+        log!("tile {TILE_ID}: not in {APP_DB}; registering it");
+    }
     ctx(fs::write(TILE_MARKER, "pending\n"), || format!("write {TILE_MARKER}"))?;
+    if INSTALL_FN.get_or_init(resolve_install).is_err() {
+        *TILE_STAGED.lock().unwrap() = Some(hash);
+        return Ok(format!("staged for the next sceAppInstUtilAppInstallAll, wrote {written:?}"));
+    }
     install_title_dir(TILE_ID)?;
     ctx(fs::write(TILE_MARKER, format!("{hash}\n")), || format!("write {TILE_MARKER}"))?;
     Ok(format!("registered, deeplink http://127.0.0.1:{port}/, wrote {written:?}"))

@@ -1,10 +1,11 @@
 /* One parameterized statement on an existing SQLite database (app.db's snd0info, register.rs
- * set_snd0info). Port of ShadowMountPlus sm_appdb.c: read-write open (never create), a busy
+ * set_snd0info; the tile's row count, tile_in_app_db). Port of ShadowMountPlus sm_appdb.c: read-write open (never create), a busy
  * timeout since the system holds app.db open, ?1 bound as text. */
 #include <stdio.h>
 #include "sqlite3.h"
 
-/* Returns the rows changed, or -1 with sqlite's message in err. */
+/* Returns the rows changed, the first column of the first row for a query (SELECT COUNT(*)),
+ * or -1 with sqlite's message in err. */
 int km_sqlite_exec1(const char *path, const char *sql, const char *arg, char *err, size_t errlen) {
     sqlite3 *db = NULL;
     sqlite3_stmt *st = NULL;
@@ -22,6 +23,8 @@ int km_sqlite_exec1(const char *path, const char *sql, const char *arg, char *er
         rc = sqlite3_step(st);
         if (rc == SQLITE_DONE)
             ret = sqlite3_changes(db);
+        else if (rc == SQLITE_ROW)
+            ret = sqlite3_column_int(st, 0);
     }
     if (ret < 0 && errlen)
         snprintf(err, errlen, "%s (%d)", db ? sqlite3_errmsg(db) : "out of memory", rc);

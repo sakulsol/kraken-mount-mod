@@ -242,6 +242,11 @@ when the pass stopped for a game start: nothing registers while a game runs, and
 so far are not registered yet, so the pass after the game exits stages them again and installs them. Logged `<TIDs>: <dlsym error>; sceAppInstUtilAppInstallAll:
 <rc> (<ms> ms)`; a failure marks each of those titles failed. A batch of more than one title
 gets one toast (`<n> games registered` / `<n> games failed`) instead of one per title.
+The tile (`KRKN00001`) is staged the same way on FW 12+ (`tile_staged`): the pass calls InstallAll
+for it even with no game staged (not while a game runs), and `tile.ok` gets its hash once that succeeds
+(a failed call leaves it `pending`, retried at the next start). The tile registers again whenever
+`tile.ok` lacks its param.json hash, a tile file changed, or app.db's `tbl_contentinfo` has no `KRKN00001`
+row (`SELECT COUNT(*)`; an unreadable app.db trusts `tile.ok`).
 Every staged copy (sce_sys, `icon0.png`, appmeta, trophy files) is set to 0666 after writing: a
 copy keeps the source's mode, and a 0600 file from a game folder would stay unreadable for the
 trophy and save services. A copied file named `param.json` gets SMP `copy_param_json_rewrite`: the
@@ -342,6 +347,7 @@ pub fn fix_access(src: &Source);                                    // add missi
 // register.rs
 pub fn register(title_id: &str, app0: &std::path::Path, sce_sys: &std::path::Path, backport: Option<&std::path::Path>) -> std::io::Result<()>;
 pub fn register_tile(port: u16);
+pub fn tile_staged() -> bool;                             // FW 12+: the tile waits for the pass's install_all
 pub fn is_registered(title_id: &str) -> bool;
 pub fn set_snd0info(title_id: &str);                      // app.db snd0info -> /user/appmeta/<TID>/snd0.at9; logs, never fails
 pub fn spawn_snd0info(title_id: &str, delay_ms: u64);    // set_snd0info on its own thread after delay_ms

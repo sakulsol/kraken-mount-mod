@@ -184,7 +184,7 @@ fn install_staged(
     state: &State, s: &Settings, staged: &mut Vec<Source>, registered: &mut HashSet<String>,
     failed: &mut HashMap<PathBuf, String>,
 ) {
-    if staged.is_empty() {
+    if staged.is_empty() && !register::tile_staged() {
         return;
     }
     let tids: Vec<String> = staged.iter().map(|g| g.title_id.clone()).collect();
@@ -196,7 +196,7 @@ fn install_staged(
     }
     // One toast for a batch: the console shows queued toasts one by one and the PS button opens
     // the one on screen, so a toast per game (32 at once on a rebuild of all) blocked leaving a game.
-    if !one {
+    if tids.len() > 1 {
         let l = i18n::lang();
         toast(s, &if r.is_ok() { i18n::registered_many(l, tids.len()) } else { i18n::failed_many(l, tids.len()) });
     }
