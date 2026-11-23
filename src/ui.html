@@ -117,8 +117,18 @@ button.danger:hover { background: rgba(255, 70, 70, 0.48); }
 
 /* ---------- Filter row: L2 [chips] R2 ... storage pill ---------- */
 main { padding: 1.1rem var(--gutter) 2rem; }
-.filters { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.3rem; }
+.filters { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.9rem; }
 /* One card per drive; Internal is always the last (rightmost), extra drives grow to its left. */
+/* Search: its own row under the filters, a magnifier drawn inline (no external request). */
+.search {
+  display: block; width: 100%; height: 3rem; margin: 0 0 1.3rem; padding: 0 1.2rem 0 3.2rem;
+  border: 1px solid rgba(255, 255, 255, 0.28); border-radius: 999px; color: var(--fg); font: inherit; font-size: 1.05rem;
+  background: rgba(255, 255, 255, 0.1) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ebebf5' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") no-repeat 1.1rem center / 1.3rem;
+  -webkit-appearance: none; appearance: none;
+}
+.search::placeholder { color: var(--muted); }
+.search:focus { border-color: #fff; background-color: rgba(255, 255, 255, 0.16); }
+[dir="rtl"] .search { padding: 0 3.2rem 0 1.2rem; background-position: right 1.1rem center; }
 .storage { display: flex; justify-content: flex-end; gap: 0.6rem; margin-left: auto; min-width: 0; }
 .seg-wrap { display: flex; align-items: center; gap: 0.6rem; min-width: 0; flex: none; }
 /* PS5 L2 / R2 hints: dump-forge's shoulder keycaps, out of the Tab order (the triggers are the binding). */
@@ -420,6 +430,7 @@ button:disabled { opacity: 0.5; cursor: default; }
     </div>
     <div class="storage" id="storage"></div>
   </div>
+  <input class="search" id="q" type="search" autocomplete="off" spellcheck="false" data-i18n-ph="search" data-i18n-aria="search">
   <div class="grid" id="grid"></div>
   <div class="empty" id="empty" hidden>
     <h2>No games found.</h2>
@@ -549,6 +560,7 @@ var MSG = {
     statusRunning: '{status} · running',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, running',
     noGames: 'No games found.', noGamesType: 'No games of this type.',
+    search: 'Search games', noGamesMatch: 'No games match "{q}".',
     emptyCopy: 'Copy {pkg} files or game folders to {dir} (or {usb} on a USB drive), then press Rescan.',
     emptyHome: 'Each game shows up here and on the home screen once it is registered.',
     showLog: 'Show log', hideLog: 'Hide log',
@@ -637,6 +649,7 @@ var MSG = {
     statusRunning: '{status} · запущена',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, запущена',
     noGames: 'Игры не найдены.', noGamesType: 'Нет игр этого типа.',
+    search: 'Поиск игр', noGamesMatch: 'Нет игр по запросу «{q}».',
     emptyCopy: 'Скопируйте файлы {pkg} или папки игр в {dir} (или в {usb} на USB-накопителе), затем нажмите «Пересканировать».',
     emptyHome: 'Каждая игра появится здесь и на главном экране после регистрации.',
     showLog: 'Показать журнал', hideLog: 'Скрыть журнал',
@@ -722,6 +735,7 @@ var MSG = {
     statusRunning: '{status} · 运行中',
     cardAria: '{name}，{type}，{status}', cardAriaRunning: '{name}，{type}，{status}，运行中',
     noGames: '未找到游戏。', noGamesType: '没有此类型的游戏。',
+    search: '搜索游戏', noGamesMatch: '没有与“{q}”匹配的游戏。',
     emptyCopy: '将 {pkg} 文件或游戏文件夹复制到 {dir}（或 USB 驱动器上的 {usb}），然后按“重新扫描”。',
     emptyHome: '每个游戏注册后都会显示在这里和主屏幕上。',
     showLog: '显示日志', hideLog: '隐藏日志',
@@ -807,6 +821,7 @@ var MSG = {
     statusRunning: '{status} · läuft',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, läuft',
     noGames: 'Keine Spiele gefunden.', noGamesType: 'Keine Spiele dieses Typs.',
+    search: 'Spiele suchen', noGamesMatch: 'Keine Spiele zu „{q}“.',
     emptyCopy: 'Kopieren Sie {pkg}-Dateien oder Spielordner nach {dir} (oder {usb} auf einem USB-Laufwerk) und drücken Sie dann „Neu scannen“.',
     emptyHome: 'Jedes Spiel erscheint hier und auf dem Startbildschirm, sobald es registriert ist.',
     showLog: 'Protokoll anzeigen', hideLog: 'Protokoll ausblenden',
@@ -892,6 +907,7 @@ var MSG = {
     statusRunning: '{status} · en curso',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, en curso',
     noGames: 'No se encontraron juegos.', noGamesType: 'No hay juegos de este tipo.',
+    search: 'Buscar juegos', noGamesMatch: 'Ningún juego coincide con «{q}».',
     emptyCopy: 'Copia archivos {pkg} o carpetas de juegos en {dir} (o en {usb} en una unidad USB) y pulsa Volver a escanear.',
     emptyHome: 'Cada juego aparece aquí y en la pantalla de inicio cuando se registra.',
     showLog: 'Mostrar registro', hideLog: 'Ocultar registro',
@@ -977,6 +993,7 @@ var MSG = {
     statusRunning: '{status} · en cours',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, en cours',
     noGames: 'Aucun jeu trouvé.', noGamesType: 'Aucun jeu de ce type.',
+    search: 'Rechercher des jeux', noGamesMatch: 'Aucun jeu ne correspond à « {q} ».',
     emptyCopy: 'Copiez des fichiers {pkg} ou des dossiers de jeux dans {dir} (ou {usb} sur une clé USB), puis appuyez sur Réanalyser.',
     emptyHome: "Chaque jeu apparaît ici et sur l'écran d'accueil une fois enregistré.",
     showLog: 'Afficher le journal', hideLog: 'Masquer le journal',
@@ -1062,6 +1079,7 @@ var MSG = {
     statusRunning: '{status} · 実行中',
     cardAria: '{name}、{type}、{status}', cardAriaRunning: '{name}、{type}、{status}、実行中',
     noGames: 'ゲームが見つかりません。', noGamesType: 'この種類のゲームはありません。',
+    search: 'ゲームを検索', noGamesMatch: '「{q}」に一致するゲームはありません。',
     emptyCopy: '{pkg} ファイルまたはゲームフォルダーを {dir}（USB ドライブでは {usb}）にコピーしてから「再スキャン」を押してください。',
     emptyHome: '各ゲームは登録されるとここにもホーム画面にも表示されます。',
     showLog: 'ログを表示', hideLog: 'ログを隠す',
@@ -1147,6 +1165,7 @@ var MSG = {
     statusRunning: '{status} · em execução',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, em execução',
     noGames: 'Nenhum jogo encontrado.', noGamesType: 'Nenhum jogo deste tipo.',
+    search: 'Pesquisar jogos', noGamesMatch: 'Nenhum jogo corresponde a "{q}".',
     emptyCopy: 'Copie arquivos {pkg} ou pastas de jogos para {dir} (ou {usb} em um drive USB) e pressione Escanear de novo.',
     emptyHome: 'Cada jogo aparece aqui e na tela inicial assim que é registrado.',
     showLog: 'Mostrar log', hideLog: 'Ocultar log',
@@ -1232,6 +1251,7 @@ var MSG = {
     statusRunning: '{status} · in esecuzione',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, in esecuzione',
     noGames: 'Nessun gioco trovato.', noGamesType: 'Nessun gioco di questo tipo.',
+    search: 'Cerca giochi', noGamesMatch: 'Nessun gioco corrisponde a "{q}".',
     emptyCopy: 'Copia file {pkg} o cartelle di giochi in {dir} (o in {usb} su un\'unità USB), poi premi Ripeti scansione.',
     emptyHome: 'Ogni gioco compare qui e nella schermata Home una volta registrato.',
     showLog: 'Mostra registro', hideLog: 'Nascondi registro',
@@ -1317,6 +1337,7 @@ var MSG = {
     statusRunning: '{status} · 실행 중',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, 실행 중',
     noGames: '게임을 찾을 수 없습니다.', noGamesType: '이 유형의 게임이 없습니다.',
+    search: '게임 검색', noGamesMatch: '"{q}"와(과) 일치하는 게임이 없습니다.',
     emptyCopy: '{pkg} 파일이나 게임 폴더를 {dir}(USB 드라이브에서는 {usb})에 복사한 다음 다시 스캔을 누르세요.',
     emptyHome: '각 게임은 등록되면 여기와 홈 화면에 나타납니다.',
     showLog: '로그 표시', hideLog: '로그 숨기기',
@@ -1402,6 +1423,7 @@ var MSG = {
     statusRunning: '{status} · قيد التشغيل',
     cardAria: '{name}، {type}، {status}', cardAriaRunning: '{name}، {type}، {status}، قيد التشغيل',
     noGames: 'لم يُعثر على ألعاب.', noGamesType: 'لا توجد ألعاب من هذا النوع.',
+    search: 'ابحث عن الألعاب', noGamesMatch: 'لا توجد ألعاب تطابق "{q}".',
     emptyCopy: 'انسخ ملفات {pkg} أو مجلدات الألعاب إلى {dir} (أو {usb} على محرك USB)، ثم اضغط إعادة المسح.',
     emptyHome: 'تظهر كل لعبة هنا وعلى الشاشة الرئيسية بعد تسجيلها.',
     showLog: 'إظهار السجل', hideLog: 'إخفاء السجل',
@@ -1530,6 +1552,8 @@ function applyStatic() {
   for (i = 0; i < list.length; i++) list[i].setAttribute('aria-label', t(list[i].getAttribute('data-i18n-aria')));
   list = document.querySelectorAll('[data-i18n-title]');
   for (i = 0; i < list.length; i++) list[i].title = t(list[i].getAttribute('data-i18n-title'));
+  list = document.querySelectorAll('[data-i18n-ph]');
+  for (i = 0; i < list.length; i++) list[i].placeholder = t(list[i].getAttribute('data-i18n-ph'));
 }
 // Text set from script keeps its producer, so a switch can render it again.
 function live(node, fn) { node._live = fn || null; setText(node, fn ? fn() : ''); }
@@ -1564,7 +1588,7 @@ function setLang(l) {
   applyLang();
   renderAll();
 }
-var state = null, cardsById = {}, filter = 'all', openTid = null, opener = null;
+var state = null, cardsById = {}, filter = 'all', query = '', openTid = null, opener = null;
 var confirmFn = null, confirmOpener = null, timer = null, queued = false;
 var logOpen = false, settingsLoaded = false, sizesRequest = 0, modalActionError = '';
 var PS = /PlayStation (?:4|5)\b/i.test(navigator.userAgent || '');
@@ -1641,6 +1665,20 @@ function gameKind(g) {
 }
 function badgeText(g) { return { pkg: 'PKG', folder: t('badgeFolder'), lz4: 'LZ4', zstd: 'ZSTD' }[gameKind(g)]; }
 function gameName(g) { return g.title_name || g.title_id; }
+// Lower case without accents, so "pokemon" finds "Pokémon".
+function fold(s) {
+  s = String(s || '').toLowerCase();
+  return s.normalize ? s.normalize('NFD').replace(/[\u0300-\u036f]/g, '') : s;
+}
+// Search box: every word of the query is in the name or the title id.
+function matchesQuery(g, q) {
+  var hay = fold(gameName(g) + ' ' + g.title_id);
+  return fold(q).split(/\s+/).every(function (w) { return !w || hay.indexOf(w) >= 0; });
+}
+function setQuery(q) {
+  query = q.trim();
+  renderGrid(state && Array.isArray(state.games) ? state.games : []);
+}
 function gameSub(g) { return g.title_id + (g.version ? ' · ' + g.version : ''); }
 function isRunning(g) { return state && Array.isArray(state.running) && state.running.indexOf(g.title_id) >= 0; }
 function driveLabel(mount) {
@@ -1847,6 +1885,7 @@ function renderGrid(games) {
   var focus = document.activeElement, focusKey = focus && focus.getAttribute ? focus.getAttribute('data-key') : null;
   games.forEach(function (g) {
     if (!g || !g.title_id || (filter !== 'all' && gameKind(g) !== filter)) return;
+    if (query && !matchesQuery(g, query)) return;
     var id = gameId(g);
     if (seen[id]) return;
     seen[id] = true;
@@ -1864,7 +1903,7 @@ function renderGrid(games) {
   var empty = $('empty'), any = games.some(function (g) { return g && g.title_id; });
   // While start-up waits (kstuff, ShadowMount+) the banner explains the empty library.
   empty.hidden = count > 0 || !!(state && state.waiting);
-  setText(empty.querySelector('h2'), t(any ? 'noGamesType' : 'noGames'));
+  setText(empty.querySelector('h2'), !any ? t('noGames') : query ? t('noGamesMatch', { q: query }) : t('noGamesType'));
   var paragraphs = empty.querySelectorAll('p');
   for (var i = 0; i < paragraphs.length; i++) paragraphs[i].hidden = any;
   if (focusKey && document.activeElement === document.body) {
@@ -2261,6 +2300,7 @@ $('logtoggle').onclick = function () {
   setText(this, t(logOpen ? 'hideLog' : 'showLog'));
   if (logOpen) $('log').scrollTop = $('log').scrollHeight;
 };
+$('q').oninput = function () { setQuery(this.value); };
 var shoulders = document.querySelectorAll('.shoulder[data-step]');
 for (var s = 0; s < shoulders.length; s++)
   shoulders[s].onclick = function () { stepFilter(+this.getAttribute('data-step')); };
@@ -2278,7 +2318,7 @@ function moveInGrid(card, key) {
   if (key === 'ArrowRight' && i % cols === cols - 1) return;
   var j = key === 'ArrowLeft' ? i - 1 : key === 'ArrowRight' ? i + 1 :
     key === 'ArrowUp' ? i - cols : i + cols;
-  if (key === 'ArrowUp' && j < 0) { focusChip(); return; }
+  if (key === 'ArrowUp' && j < 0) { $('q').focus(); return; }
   if (key === 'ArrowDown' && j >= list.length) {
     if (Math.floor(i / cols) < Math.floor((list.length - 1) / cols)) j = list.length - 1;
     else return;
@@ -2293,7 +2333,7 @@ function moveInSeg(btn, key) {
     else if (seg.id !== 'chips') moveInTop(btn, key);
     else if (key === 'ArrowRight' && document.querySelector('#storage .eject')) document.querySelector('#storage .eject').focus();
   } else if (seg.id === 'chips') {
-    if (key === 'ArrowDown' && cards().length) cards()[0].focus();
+    if (key === 'ArrowDown') $('q').focus();
     if (key === 'ArrowUp') document.querySelector('.nav [aria-selected="true"]').focus();
   } else if (key === 'ArrowDown') {
     if ($('library').hidden) fields()[0].focus(); else focusChip();
@@ -2304,7 +2344,7 @@ function moveInStorage(btn, key) {
   var row = Array.prototype.slice.call(document.querySelectorAll('#storage .eject')), i = row.indexOf(btn);
   if (key === 'ArrowRight' && row[i + 1]) row[i + 1].focus();
   else if (key === 'ArrowLeft') { if (row[i - 1]) row[i - 1].focus(); else focusChip(); }
-  else if (key === 'ArrowDown' && cards().length) cards()[0].focus();
+  else if (key === 'ArrowDown') $('q').focus();
   else if (key === 'ArrowUp') document.querySelector('.nav [aria-selected="true"]').focus();
 }
 // The top row: screen tabs, then Stop and GitHub.
@@ -2386,6 +2426,8 @@ document.addEventListener('keydown', function (e) {
     if (arrow && !PS) { e.preventDefault(); moveInModal(k); }
     return;
   }
+  if (k === 'Escape' && t === $('q') && t.value) { e.preventDefault(); t.value = ''; setQuery(''); return; }
+  if (k === '/' && !typing && !$('library').hidden) { e.preventDefault(); $('q').focus(); return; }
   if (k === 'Escape' || (k === 'Backspace' && !typing)) {
     if (!$('settings').hidden) { e.preventDefault(); setView('library'); $('tab-library').focus(); }
     return;
@@ -2396,6 +2438,11 @@ document.addEventListener('keydown', function (e) {
   // PlayStation uses unconsumed arrows to move its native cursor and open the text IME.
   if (!arrow || PS) return;
   if ($('settings').contains(t)) { if (moveInSettings(t, k)) e.preventDefault(); return; }
+  if (t === $('q')) {
+    if (k === 'ArrowDown' && cards().length) { e.preventDefault(); cards()[0].focus(); }
+    else if (k === 'ArrowUp') { e.preventDefault(); focusChip(); }
+    return;
+  }
   if (typing) return;
   if (t.classList.contains('card')) { e.preventDefault(); moveInGrid(t, k); }
   else if (t.classList.contains('seg-opt')) { e.preventDefault(); moveInSeg(t, k); }
