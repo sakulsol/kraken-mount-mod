@@ -528,9 +528,13 @@ fn api_state(state: &State) -> Vec<u8> {
         s.add_emulators.then(|| s.playgo_off.clone())
     };
     let crashes = crate::crash::load();
-    let games: Vec<_> = state.games.lock().unwrap().iter()
-        .map(|g| game_json(g, playgo_off.as_deref(), crashes.get(&g.src.title_id)))
-        .collect();
+    // A rebuild asked for but not started yet (the pass picks it up, or a game is running).
+    let queued = state.forced.lock().unwrap().clone();
+    let games: Vec<_> = state.games.lock().unwrap().iter().map(|g| {
+        let mut v = game_json(g, playgo_off.as_deref(), crashes.get(&g.src.title_id));
+        v["rebuild_queued"] = queued.contains(&g.src.title_id).into();
+        v
+    }).collect();
     let all = storage::drives();
     let drives: Vec<_> = all
         .iter()

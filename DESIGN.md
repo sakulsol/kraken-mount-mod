@@ -392,7 +392,8 @@ If a newer copy took the port meanwhile, this copy quits (not while a game runs)
   `{version, busy, paused, waiting:"kstuff"|"shadowmount"|null, running:[TID], games:[{title_id, title_name, version, path, kind:"pkg"|"folder", packing:"plain"|"zstd"|"lz4"|null,
   drive, size, status:"pending"|"checking"|"building"|"ready"|"error"|"duplicate", error, cache_size, cache_built, backport,
   playgo: bool|null (the memoized "eboot imports PlayGo", null when unknown or `add_emulators` is off), playgo_off: bool (false while `add_emulators` is off),
-  crash: {at, process, status}|null (the last crash, from crashes.json, see Crash report)}],
+  crash: {at, process, status}|null (the last crash, from crashes.json, see Crash report),
+  rebuild_queued: bool (a rebuild asked for, not started yet; the UI keeps Rebuild disabled through it and while the game is pending, checking or building)}],
   drives:[{mount, label, kind, total, free, ejectable}], cache:{path, size, free, low_space, ampr_present}, log:[last 100 lines of the last 64 KiB]}`
 - `GET /api/report/<TID>` -> plain text for an issue: Kraken Mount version, a firmware line to fill in,
   the game (name, title id, version, source, kind, drive, status and error), ampr-emu-ng (`/api/ampr`

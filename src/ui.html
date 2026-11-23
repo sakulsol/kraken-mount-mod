@@ -1938,7 +1938,7 @@ function renderModal() {
   }
   setText($('m-err'), modalActionError || g.error || (g.crash ? t('crashHint') : ''));
   // A duplicate shares the title id of the library copy: the API calls would act on that copy.
-  $('m-rebuild').disabled = g.status === 'duplicate' || g.status === 'building';
+  $('m-rebuild').disabled = rebuildLocked(g);
   $('m-delete').disabled = g.status === 'duplicate';
   $('m-report').disabled = g.status === 'duplicate';
   // The PlayGo switch: only for a game whose eboot imports PlayGo, or one turned off already.
@@ -2005,11 +2005,20 @@ $('m-report').onclick = function () {
   var url = '/api/report/' + encodeURIComponent(openTid);
   if (!window.open(url, '_blank')) location.href = url;
 };
+// No Rebuild while one is queued or running (building, then checking while it registers), so it
+// is not pressed again; a duplicate shares the title id of the library copy, so the call would
+// act on that copy.
+function rebuildLocked(g) {
+  return !!g.rebuild_queued || ['duplicate', 'pending', 'checking', 'building'].indexOf(g.status) >= 0;
+}
 $('m-rebuild').onclick = function () {
   var g = openTid && findGame(openTid);
   if (!g) return;
-  ask(t('rebuildTitle', { name: gameName(g) }), t('rebuildText'), t('rebuildYes'),
-    function () { post('/api/rebuild/' + encodeURIComponent(g.title_id)); });
+  ask(t('rebuildTitle', { name: gameName(g) }), t('rebuildText'), t('rebuildYes'), function () {
+    // Until the next state says it is queued.
+    $('m-rebuild').disabled = true;
+    post('/api/rebuild/' + encodeURIComponent(g.title_id));
+  });
 };
 $('m-playgo').onchange = async function () {
   var box = this, g = openTid && findGame(openTid);
