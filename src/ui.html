@@ -118,7 +118,6 @@ button.danger:hover { background: rgba(255, 70, 70, 0.48); }
 /* ---------- Filter row: L2 [chips] R2 ... storage pill ---------- */
 main { padding: 1.1rem var(--gutter) 2rem; }
 .filters { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.9rem; }
-/* One card per drive; Internal is always the last (rightmost), extra drives grow to its left. */
 /* Search: its own row under the filters, a magnifier drawn inline (no external request). */
 .search {
   display: block; width: 100%; height: 3rem; margin: 0 0 1.3rem; padding: 0 1.2rem 0 3.2rem;
@@ -129,7 +128,7 @@ main { padding: 1.1rem var(--gutter) 2rem; }
 .search::placeholder { color: var(--muted); }
 .search:focus { border-color: #fff; background-color: rgba(255, 255, 255, 0.16); }
 [dir="rtl"] .search { padding: 0 3.2rem 0 1.2rem; background-position: right 1.1rem center; }
-.storage { display: flex; justify-content: flex-end; gap: 0.6rem; margin-left: auto; min-width: 0; }
+.storage { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.6rem; margin-left: auto; min-width: 0; }
 .seg-wrap { display: flex; align-items: center; gap: 0.6rem; min-width: 0; flex: none; }
 /* PS5 L2 / R2 hints: dump-forge's shoulder keycaps, out of the Tab order (the triggers are the binding). */
 button.shoulder {
@@ -144,15 +143,13 @@ button.shoulder:hover { color: var(--fg); }
   background: rgba(255, 255, 255, 0.16); color: var(--fg); font-size: 0.78rem; font-weight: 600;
 }
 .seg-opt[aria-pressed="true"] .count { background: #12121a; color: #fff; }
-.storage-pill {
-  display: flex; align-items: center; gap: 0.9rem; height: 2.85rem; padding: 0 1.2rem;
-  border-radius: 999px; font-size: 0.92rem; white-space: nowrap; min-width: 0; overflow: hidden;
-}
-.storage-pill b { font-weight: 600; }
-.storage-pill b, .storage-pill > span:last-of-type, .storage-pill .eject { flex: none; }
-.storage-pill .eject { height: 2rem; padding: 0 0.8rem; }
-/* On one row with the filters: the meters give up width first when many drives are mounted. */
-.storage-pill .meter { min-width: 1.5rem; }
+/* Drives: compact chips that filter the grid (label, use meter, free space). */
+button.drive { height: 2.6rem; gap: 0.6rem; padding: 0 1rem; font-size: 0.9rem; }
+button.drive b { font-weight: 600; }
+button.drive .free { color: var(--muted); }
+button.drive[aria-pressed="true"] { background: rgba(255, 255, 255, 0.9); color: #12121a; }
+button.drive[aria-pressed="true"] .free { color: #3a3a46; }
+button.drive .meter { width: 2.6rem; }
 .meter { width: 7rem; height: 0.4rem; border-radius: 999px; background: rgba(255, 255, 255, 0.16); overflow: hidden; }
 .meter i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #8fb0ff, #fff); }
 
@@ -366,7 +363,6 @@ button:disabled { opacity: 0.5; cursor: default; }
   .brand img { width: 3rem; height: 3rem; }
   .brand-row { gap: 0.4rem; }
   .top-actions { gap: 0.35rem; }
-  .storage-pill { max-width: 100%; white-space: normal; height: auto; min-height: 2.85rem; flex-wrap: wrap; padding: 0.6rem 0.9rem; }
   .dialog { max-width: none; border-radius: 1.2rem; }
   .settings-foot .btns { flex-wrap: wrap; }
 }
@@ -429,7 +425,7 @@ button:disabled { opacity: 0.5; cursor: default; }
       <div class="chips" id="chips" role="group" aria-label="Source type" data-i18n-aria="sourceType"></div>
       <button class="shoulder glass" type="button" tabindex="-1" data-step="1" aria-label="Next filter (R2)" data-i18n-aria="nextFilter">R2</button>
     </div>
-    <div class="storage" id="storage"></div>
+    <div class="storage" id="storage" role="group" data-i18n-aria="fDrive"></div>
   </div>
   <input class="search" id="q" type="search" autocomplete="off" spellcheck="false" data-i18n-ph="search" data-i18n-aria="search">
   <div class="grid" id="grid"></div>
@@ -562,7 +558,7 @@ var MSG = {
     statusRunning: '{status} · running',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, running',
     noGames: 'No games found.', noGamesType: 'No games of this type.',
-    search: 'Search games', noGamesMatch: 'No games match "{q}".',
+    search: 'Search games', noGamesMatch: 'No games match "{q}".', noGamesDrive: 'No games on this drive.',
     play: 'Play', launchFailed: 'Could not start the game: {error}',
     emptyCopy: 'Copy {pkg} files or game folders to {dir} (or {usb} on a USB drive), then press Rescan.',
     emptyHome: 'Each game shows up here and on the home screen once it is registered.',
@@ -652,7 +648,7 @@ var MSG = {
     statusRunning: '{status} · запущена',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, запущена',
     noGames: 'Игры не найдены.', noGamesType: 'Нет игр этого типа.',
-    search: 'Поиск игр', noGamesMatch: 'Нет игр по запросу «{q}».',
+    search: 'Поиск игр', noGamesMatch: 'Нет игр по запросу «{q}».', noGamesDrive: 'На этом диске нет игр.',
     play: 'Играть', launchFailed: 'Не удалось запустить игру: {error}',
     emptyCopy: 'Скопируйте файлы {pkg} или папки игр в {dir} (или в {usb} на USB-накопителе), затем нажмите «Пересканировать».',
     emptyHome: 'Каждая игра появится здесь и на главном экране после регистрации.',
@@ -739,7 +735,7 @@ var MSG = {
     statusRunning: '{status} · 运行中',
     cardAria: '{name}，{type}，{status}', cardAriaRunning: '{name}，{type}，{status}，运行中',
     noGames: '未找到游戏。', noGamesType: '没有此类型的游戏。',
-    search: '搜索游戏', noGamesMatch: '没有与“{q}”匹配的游戏。',
+    search: '搜索游戏', noGamesMatch: '没有与“{q}”匹配的游戏。', noGamesDrive: '此驱动器上没有游戏。',
     play: '开始游戏', launchFailed: '无法启动游戏：{error}',
     emptyCopy: '将 {pkg} 文件或游戏文件夹复制到 {dir}（或 USB 驱动器上的 {usb}），然后按“重新扫描”。',
     emptyHome: '每个游戏注册后都会显示在这里和主屏幕上。',
@@ -826,7 +822,7 @@ var MSG = {
     statusRunning: '{status} · läuft',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, läuft',
     noGames: 'Keine Spiele gefunden.', noGamesType: 'Keine Spiele dieses Typs.',
-    search: 'Spiele suchen', noGamesMatch: 'Keine Spiele zu „{q}“.',
+    search: 'Spiele suchen', noGamesMatch: 'Keine Spiele zu „{q}“.', noGamesDrive: 'Keine Spiele auf diesem Laufwerk.',
     play: 'Spielen', launchFailed: 'Spiel konnte nicht gestartet werden: {error}',
     emptyCopy: 'Kopieren Sie {pkg}-Dateien oder Spielordner nach {dir} (oder {usb} auf einem USB-Laufwerk) und drücken Sie dann „Neu scannen“.',
     emptyHome: 'Jedes Spiel erscheint hier und auf dem Startbildschirm, sobald es registriert ist.',
@@ -913,7 +909,7 @@ var MSG = {
     statusRunning: '{status} · en curso',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, en curso',
     noGames: 'No se encontraron juegos.', noGamesType: 'No hay juegos de este tipo.',
-    search: 'Buscar juegos', noGamesMatch: 'Ningún juego coincide con «{q}».',
+    search: 'Buscar juegos', noGamesMatch: 'Ningún juego coincide con «{q}».', noGamesDrive: 'No hay juegos en esta unidad.',
     play: 'Jugar', launchFailed: 'No se pudo iniciar el juego: {error}',
     emptyCopy: 'Copia archivos {pkg} o carpetas de juegos en {dir} (o en {usb} en una unidad USB) y pulsa Volver a escanear.',
     emptyHome: 'Cada juego aparece aquí y en la pantalla de inicio cuando se registra.',
@@ -1000,7 +996,7 @@ var MSG = {
     statusRunning: '{status} · en cours',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, en cours',
     noGames: 'Aucun jeu trouvé.', noGamesType: 'Aucun jeu de ce type.',
-    search: 'Rechercher des jeux', noGamesMatch: 'Aucun jeu ne correspond à « {q} ».',
+    search: 'Rechercher des jeux', noGamesMatch: 'Aucun jeu ne correspond à « {q} ».', noGamesDrive: 'Aucun jeu sur ce disque.',
     play: 'Jouer', launchFailed: 'Impossible de lancer le jeu : {error}',
     emptyCopy: 'Copiez des fichiers {pkg} ou des dossiers de jeux dans {dir} (ou {usb} sur une clé USB), puis appuyez sur Réanalyser.',
     emptyHome: "Chaque jeu apparaît ici et sur l'écran d'accueil une fois enregistré.",
@@ -1087,7 +1083,7 @@ var MSG = {
     statusRunning: '{status} · 実行中',
     cardAria: '{name}、{type}、{status}', cardAriaRunning: '{name}、{type}、{status}、実行中',
     noGames: 'ゲームが見つかりません。', noGamesType: 'この種類のゲームはありません。',
-    search: 'ゲームを検索', noGamesMatch: '「{q}」に一致するゲームはありません。',
+    search: 'ゲームを検索', noGamesMatch: '「{q}」に一致するゲームはありません。', noGamesDrive: 'このドライブにはゲームがありません。',
     play: 'プレイ', launchFailed: 'ゲームを起動できませんでした: {error}',
     emptyCopy: '{pkg} ファイルまたはゲームフォルダーを {dir}（USB ドライブでは {usb}）にコピーしてから「再スキャン」を押してください。',
     emptyHome: '各ゲームは登録されるとここにもホーム画面にも表示されます。',
@@ -1174,7 +1170,7 @@ var MSG = {
     statusRunning: '{status} · em execução',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, em execução',
     noGames: 'Nenhum jogo encontrado.', noGamesType: 'Nenhum jogo deste tipo.',
-    search: 'Pesquisar jogos', noGamesMatch: 'Nenhum jogo corresponde a "{q}".',
+    search: 'Pesquisar jogos', noGamesMatch: 'Nenhum jogo corresponde a "{q}".', noGamesDrive: 'Nenhum jogo nesta unidade.',
     play: 'Jogar', launchFailed: 'Não foi possível iniciar o jogo: {error}',
     emptyCopy: 'Copie arquivos {pkg} ou pastas de jogos para {dir} (ou {usb} em um drive USB) e pressione Escanear de novo.',
     emptyHome: 'Cada jogo aparece aqui e na tela inicial assim que é registrado.',
@@ -1261,7 +1257,7 @@ var MSG = {
     statusRunning: '{status} · in esecuzione',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, in esecuzione',
     noGames: 'Nessun gioco trovato.', noGamesType: 'Nessun gioco di questo tipo.',
-    search: 'Cerca giochi', noGamesMatch: 'Nessun gioco corrisponde a "{q}".',
+    search: 'Cerca giochi', noGamesMatch: 'Nessun gioco corrisponde a "{q}".', noGamesDrive: 'Nessun gioco su questa unità.',
     play: 'Gioca', launchFailed: 'Impossibile avviare il gioco: {error}',
     emptyCopy: 'Copia file {pkg} o cartelle di giochi in {dir} (o in {usb} su un\'unità USB), poi premi Ripeti scansione.',
     emptyHome: 'Ogni gioco compare qui e nella schermata Home una volta registrato.',
@@ -1348,7 +1344,7 @@ var MSG = {
     statusRunning: '{status} · 실행 중',
     cardAria: '{name}, {type}, {status}', cardAriaRunning: '{name}, {type}, {status}, 실행 중',
     noGames: '게임을 찾을 수 없습니다.', noGamesType: '이 유형의 게임이 없습니다.',
-    search: '게임 검색', noGamesMatch: '"{q}"와(과) 일치하는 게임이 없습니다.',
+    search: '게임 검색', noGamesMatch: '"{q}"와(과) 일치하는 게임이 없습니다.', noGamesDrive: '이 드라이브에 게임이 없습니다.',
     play: '플레이', launchFailed: '게임을 시작할 수 없습니다: {error}',
     emptyCopy: '{pkg} 파일이나 게임 폴더를 {dir}(USB 드라이브에서는 {usb})에 복사한 다음 다시 스캔을 누르세요.',
     emptyHome: '각 게임은 등록되면 여기와 홈 화면에 나타납니다.',
@@ -1435,7 +1431,7 @@ var MSG = {
     statusRunning: '{status} · قيد التشغيل',
     cardAria: '{name}، {type}، {status}', cardAriaRunning: '{name}، {type}، {status}، قيد التشغيل',
     noGames: 'لم يُعثر على ألعاب.', noGamesType: 'لا توجد ألعاب من هذا النوع.',
-    search: 'ابحث عن الألعاب', noGamesMatch: 'لا توجد ألعاب تطابق "{q}".',
+    search: 'ابحث عن الألعاب', noGamesMatch: 'لا توجد ألعاب تطابق "{q}".', noGamesDrive: 'لا توجد ألعاب على هذا القرص.',
     play: 'العب', launchFailed: 'تعذّر تشغيل اللعبة: {error}',
     emptyCopy: 'انسخ ملفات {pkg} أو مجلدات الألعاب إلى {dir} (أو {usb} على محرك USB)، ثم اضغط إعادة المسح.',
     emptyHome: 'تظهر كل لعبة هنا وعلى الشاشة الرئيسية بعد تسجيلها.',
@@ -1601,7 +1597,7 @@ function setLang(l) {
   applyLang();
   renderAll();
 }
-var state = null, cardsById = {}, filter = 'all', query = '', openTid = null, opener = null;
+var state = null, cardsById = {}, filter = 'all', query = '', driveFilter = '', openTid = null, opener = null;
 var confirmFn = null, confirmOpener = null, timer = null, queued = false;
 var logOpen = false, settingsLoaded = false, sizesRequest = 0, modalActionError = '';
 var PS = /PlayStation (?:4|5)\b/i.test(navigator.userAgent || '');
@@ -1790,47 +1786,56 @@ function stepFilter(d) {
   KINDS.forEach(function (k, j) { if (k.id === filter) i = j; });
   setFilter(KINDS[(i + d + KINDS.length) % KINDS.length].id);
 }
+// Drive chips: Internal first. A chip filters the grid to its games; the selected USB drive gets Unmount.
 function renderStorage(drives) {
   var list = [], internal = null;
   (drives || []).forEach(function (d) { if (d.mount === '/data') internal = d; else list.push(d); });
-  if (internal) list.push(internal);
+  if (internal) list.unshift(internal);
+  if (driveFilter && !list.some(function (d) { return d.mount === driveFilter; })) driveFilter = '';
   var box = $('storage');
   box.hidden = !list.length;
-  var key = list.map(function (d) { return d.mount + (d.ejectable ? '*' : ''); }).join('|');
+  var key = list.map(function (d) { return d.mount; }).join('|');
   if (box.getAttribute('data-key') !== key) {
     var hadFocus = box.contains(document.activeElement);
     box.setAttribute('data-key', key);
     box.textContent = '';
     list.forEach(function (d) {
-      var pill = el('div', 'storage-pill glass'), meter = el('span', 'meter');
+      var chip = el('button', 'drive glass'), meter = el('span', 'meter');
+      chip.type = 'button';
+      chip.onclick = function () { setDriveFilter(driveFilter === d.mount ? '' : d.mount); };
       meter.appendChild(el('i'));
-      pill.appendChild(el('b'));
-      pill.appendChild(meter);
-      pill.appendChild(el('span'));
-      if (d.ejectable) {
-        var btn = el('button', 'small eject');
-        btn.type = 'button';
-        btn.setAttribute('data-mount', d.mount);
-        btn.onclick = function () { askEject(d.mount); };
-        pill.appendChild(btn);
-      }
-      box.appendChild(pill);
+      chip.appendChild(el('b'));
+      chip.appendChild(meter);
+      chip.appendChild(el('span', 'free'));
+      box.appendChild(chip);
     });
+    var eject = el('button', 'small eject');
+    eject.type = 'button';
+    eject.onclick = function () { if (driveFilter) askEject(driveFilter); };
+    box.appendChild(eject);
     if (hadFocus) focusChip();
   }
+  var sel = null;
   list.forEach(function (d, i) {
-    var pill = box.children[i];
+    var chip = box.children[i];
     var used = d.total ? Math.max(0, Math.min(100, 100 * (d.total - d.free) / d.total)) : 0;
-    setText(pill.children[0], driveLabel(d.mount));
-    pill.children[1].firstChild.style.width = used.toFixed(1) + '%';
-    setText(pill.children[2], t('driveFree', { free: fmtSize(d.free), total: fmtSize(d.total) }));
-    var btn = pill.children[3];
-    if (btn) {
-      btn.disabled = ejecting != null;
-      setText(btn, t(ejecting === d.mount ? 'ejecting' : 'eject'));
-      btn.setAttribute('aria-label', t('ejectAria', { drive: driveLabel(d.mount) }));
-    }
+    if (d.mount === driveFilter) sel = d;
+    chip.setAttribute('aria-pressed', String(d.mount === driveFilter));
+    chip.title = t('driveFree', { free: fmtSize(d.free), total: fmtSize(d.total) });
+    setText(chip.children[0], driveLabel(d.mount));
+    chip.children[1].firstChild.style.width = used.toFixed(1) + '%';
+    setText(chip.children[2], gb(d.free));
   });
+  var btn = box.lastChild;
+  btn.hidden = !(sel && sel.ejectable);
+  btn.disabled = ejecting != null;
+  setText(btn, t(sel && ejecting === sel.mount ? 'ejecting' : 'eject'));
+  if (sel) btn.setAttribute('aria-label', t('ejectAria', { drive: driveLabel(sel.mount) }));
+}
+function setDriveFilter(mount) {
+  driveFilter = mount;
+  renderStorage(state && state.drives);
+  renderGrid(state && Array.isArray(state.games) ? state.games : []);
 }
 // One unmount at a time; the server answers within ~6 s. The reason comes from the server, in English.
 var ejecting = null, ejectTimer = null;
@@ -1857,7 +1862,7 @@ function askEject(mount) {
     }
     ejecting = null;
     if (state) renderStorage(state.drives);
-    var again = document.querySelector('#storage .eject[data-mount="' + mount + '"]');
+    var again = document.querySelector('#storage .eject:not([hidden])');
     if (again && (!document.activeElement || document.activeElement === document.body)) again.focus();
   });
 }
@@ -1899,6 +1904,7 @@ function renderGrid(games) {
   games.forEach(function (g) {
     if (!g || !g.title_id || (filter !== 'all' && gameKind(g) !== filter)) return;
     if (query && !matchesQuery(g, query)) return;
+    if (driveFilter && g.drive !== driveFilter) return;
     var id = gameId(g);
     if (seen[id]) return;
     seen[id] = true;
@@ -1916,7 +1922,7 @@ function renderGrid(games) {
   var empty = $('empty'), any = games.some(function (g) { return g && g.title_id; });
   // While start-up waits (kstuff, ShadowMount+) the banner explains the empty library.
   empty.hidden = count > 0 || !!(state && state.waiting);
-  setText(empty.querySelector('h2'), !any ? t('noGames') : query ? t('noGamesMatch', { q: query }) : t('noGamesType'));
+  setText(empty.querySelector('h2'), !any ? t('noGames') : query ? t('noGamesMatch', { q: query }) : driveFilter ? t('noGamesDrive') : t('noGamesType'));
   var paragraphs = empty.querySelectorAll('p');
   for (var i = 0; i < paragraphs.length; i++) paragraphs[i].hidden = any;
   if (focusKey && document.activeElement === document.body) {
@@ -2362,7 +2368,7 @@ function moveInSeg(btn, key) {
     var sib = key === 'ArrowLeft' ? btn.previousElementSibling : btn.nextElementSibling;
     if (sib) sib.focus();
     else if (seg.id !== 'chips') moveInTop(btn, key);
-    else if (key === 'ArrowRight' && document.querySelector('#storage .eject')) document.querySelector('#storage .eject').focus();
+    else if (key === 'ArrowRight' && storageRow()[0]) storageRow()[0].focus();
   } else if (seg.id === 'chips') {
     if (key === 'ArrowDown') $('q').focus();
     if (key === 'ArrowUp') document.querySelector('.nav [aria-selected="true"]').focus();
@@ -2370,9 +2376,12 @@ function moveInSeg(btn, key) {
     if ($('library').hidden) fields()[0].focus(); else focusChip();
   }
 }
-// The Unmount buttons on the drive pills, right of the filter chips.
+// The drive chips and the Unmount button, right of the type chips.
+function storageRow() {
+  return Array.prototype.slice.call(document.querySelectorAll('#storage button')).filter(function (b) { return !b.hidden; });
+}
 function moveInStorage(btn, key) {
-  var row = Array.prototype.slice.call(document.querySelectorAll('#storage .eject')), i = row.indexOf(btn);
+  var row = storageRow(), i = row.indexOf(btn);
   if (key === 'ArrowRight' && row[i + 1]) row[i + 1].focus();
   else if (key === 'ArrowLeft') { if (row[i - 1]) row[i - 1].focus(); else focusChip(); }
   else if (key === 'ArrowDown') $('q').focus();
@@ -2477,7 +2486,7 @@ document.addEventListener('keydown', function (e) {
   if (typing) return;
   if (t.classList.contains('card')) { e.preventDefault(); moveInGrid(t, k); }
   else if (t.classList.contains('seg-opt')) { e.preventDefault(); moveInSeg(t, k); }
-  else if (t.classList.contains('eject')) { e.preventDefault(); moveInStorage(t, k); }
+  else if (t.parentNode && t.parentNode.id === 'storage') { e.preventDefault(); moveInStorage(t, k); }
   else if ((k === 'ArrowLeft' || k === 'ArrowRight') && t.parentNode.classList.contains('top-actions')) {
     e.preventDefault(); moveInTop(t, k);
   }
