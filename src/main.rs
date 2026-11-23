@@ -8,6 +8,7 @@
 #[macro_use]
 mod sys;
 mod i18n;
+mod image;
 mod ampr_index;
 mod cache;
 mod config;
@@ -835,6 +836,15 @@ fn main() {
             state.forced.lock().unwrap().extend(keep);
         }
         publish(&state, &r);
+        // Image mounts no source of this scan uses (image deleted, moved or unplugged) are released
+        // before the games are processed, so a moved image's title sees its old folder gone (Moved).
+        // A game folder with a scan error (bad param.json) keeps its mount too: no remount every pass.
+        let keep: HashSet<PathBuf> = r.games.iter().chain(&r.duplicates).filter_map(|g| g.image.as_deref())
+            .chain(r.unstable.iter().map(|(p, _)| p.as_path()).filter(|p| image::is_image(p)))
+            .map(image::mount_point)
+            .chain(r.errors.iter().filter_map(|(p, _)| image::mount_of(p)))
+            .collect();
+        image::release_unused(&keep);
         // A source that left the scan (USB unplugged) goes through register::mount again when back.
         // A source still being copied stays registered (skipped this pass, not gone).
         registered.retain(|t| r.games.iter().any(|g| &g.title_id == t)

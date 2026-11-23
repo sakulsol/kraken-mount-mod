@@ -1606,7 +1606,7 @@ var LOOPBACK = (location.hostname === '127.0.0.1' || location.hostname === 'loca
 var stopped = false, launchTried = false;
 var KINDS = [
   { id: 'all', key: 'kindAll' }, { id: 'pkg', label: 'PKG' }, { id: 'folder', key: 'kindFolders' },
-  { id: 'lz4', label: 'LZ4' }, { id: 'zstd', label: 'ZSTD' }
+  { id: 'lz4', label: 'LZ4' }, { id: 'zstd', label: 'ZSTD' }, { id: 'exfat', label: 'exFAT' }
 ];
 function kindLabel(kind) { return kind.key ? t(kind.key) : kind.label; }
 var LABEL = { pending: 'stPending', checking: 'stChecking', building: 'stBuilding', ready: 'stReady', error: 'stError', duplicate: 'stDuplicate' };
@@ -1669,10 +1669,11 @@ function findGame(id) {
 }
 function gameKind(g) {
   if (g.kind === 'pkg') return 'pkg';
+  if (g.image) return 'exfat';
   if (g.packing === 'lz4' || g.packing === 'zstd') return g.packing;
   return 'folder';
 }
-function badgeText(g) { return { pkg: 'PKG', folder: t('badgeFolder'), lz4: 'LZ4', zstd: 'ZSTD' }[gameKind(g)]; }
+function badgeText(g) { return { pkg: 'PKG', folder: t('badgeFolder'), lz4: 'LZ4', zstd: 'ZSTD', exfat: 'exFAT' }[gameKind(g)]; }
 function gameName(g) { return g.title_name || g.title_id; }
 // Lower case without accents, so "pokemon" finds "Pokémon".
 function fold(s) {
@@ -1746,7 +1747,7 @@ function updateCover(c, g) {
 }
 
 function renderChips(games) {
-  var counts = { all: 0, pkg: 0, folder: 0, lz4: 0, zstd: 0 };
+  var counts = { all: 0, pkg: 0, folder: 0, lz4: 0, zstd: 0, exfat: 0 };
   games.forEach(function (g) { if (g && g.title_id) { counts.all++; counts[gameKind(g)]++; } });
   var box = $('chips');
   KINDS.forEach(function (kind, i) {

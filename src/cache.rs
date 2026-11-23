@@ -367,6 +367,8 @@ pub fn fix_access(src: &Source) {
                 }
             }
         }
+        // A read-only exFAT image mount (ignoreacl): chmod would only fail (EROFS) on every file.
+        Kind::Folder(_) if src.image.is_some() => {}
         Kind::Folder(_) => a.tree(&src.path, 0o555, 0o444),
     }
     if a.fixed + a.failed == 0 {

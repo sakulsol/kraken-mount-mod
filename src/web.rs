@@ -123,6 +123,7 @@ fn game_json(g: &Game, playgo_off: Option<&[String]>, crash: Option<&crate::cras
         "path": g.src.path.to_string_lossy(),
         "kind": kind,
         "packing": packing,
+        "image": g.src.image.as_ref().map(|i| i.to_string_lossy()),
         "drive": g.src.drive,
         "size": g.src.size,
         "status": g.status,
@@ -607,6 +608,7 @@ fn sizes(state: &State, tid: &str) -> Reply {
             log!("{tid}: stat {}: {e}", src.path.display());
             src.size
         }),
+        Kind::Folder(_) if src.image.is_some() => src.size,
         Kind::Folder(_) => cache::du(&src.path),
     };
     let dlc: u64 = [
@@ -777,7 +779,7 @@ extern "C" {
 
 /// (mount point, source, fsid) of every mount. getfsstat into our own buffer: ps5/compat.c's
 /// getmntinfo shares one static buffer with the launch watcher's thread.
-fn mount_table() -> std::io::Result<Vec<(String, String, u64)>> {
+pub(crate) fn mount_table() -> std::io::Result<Vec<(String, String, u64)>> {
     let mut extra = 8; // room for mounts added between the two calls
     for _ in 0..4 {
         let n = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
@@ -883,6 +885,19 @@ fn eject(state: &State, body: &[u8]) -> Reply {
     for tid in tids {
         if let Err(e) = register::unmount_title(tid) {
             log!("eject {path}: {tid}: unmount: {e}");
+            drop(work);
+            state.wake();
+            return reply(409, "text/plain", e.to_string());
+        }
+    }
+    // exFAT images on the drive: their titles, then the image mounts (they keep the drive busy).
+    let prefix = format!("{path}/");
+    for (mp, image) in crate::image::mounts() {
+        if !image.to_string_lossy().starts_with(&prefix) {
+            continue;
+        }
+        if let Err(e) = crate::image::release_with_titles(&mp, &mounts) {
+            log!("eject {path}: image {}: {e}", image.display());
             drop(work);
             state.wake();
             return reply(409, "text/plain", e.to_string());
