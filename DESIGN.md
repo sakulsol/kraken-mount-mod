@@ -415,6 +415,9 @@ If a newer copy took the port meanwhile, this copy quits (not while a game runs)
   save is summed across eight-hex-digit `/user/home/<id>/<family>/<TID>` directories, where family
   is `savedata_prospero` for a `PPSA` title id and `savedata` otherwise.
   Missing directories count as zero; unreadable `/user/home` gives `save: null`.
+- `POST /api/launch/<TID>` -> starts the title for the foreground user (`sceLncUtilLaunchApp`, then
+  `sceSystemServiceLaunchApp`), 204 once a launch is taken; 404 for an invalid or absent library title,
+  409 while a game runs or when the title is not `ready`, 502 + error text when both calls fail.
 - `POST /api/delete/<TID>`, body: the source path the UI showed (the game's `path`) -> 204 on success,
   404 for an invalid or absent library title, 409 while the scan loop is in a pass (it holds
   `State::work` for scan, purge, build and register; delete only try-locks it), when the body is not

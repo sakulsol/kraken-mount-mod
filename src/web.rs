@@ -365,6 +365,7 @@ fn route(state: &State, head: &str, body: &[u8], loopback: bool) -> Reply {
         ("POST", p) if p.starts_with("/api/playgo/") => post_playgo(state, &p["/api/playgo/".len()..], body),
         ("POST", p) if p.starts_with("/api/rebuild/") => rebuild(state, &p["/api/rebuild/".len()..]),
         ("POST", p) if p.starts_with("/api/delete/") => delete(state, &p["/api/delete/".len()..], body),
+        ("POST", p) if p.starts_with("/api/launch/") => launch(state, &p["/api/launch/".len()..]),
         ("POST", "/api/eject") => eject(state, body),
         ("POST", "/api/purge") => {
             log!("cache purge requested");
@@ -678,6 +679,29 @@ fn safe_delete_source(src: &Source, roots: &[String]) -> Result<(), &'static str
         Kind::Folder(_) if meta.is_dir() => Ok(()),
         Kind::Pkg => Err("source is not a .pkg file"),
         Kind::Folder(_) => Err("source is not a directory"),
+    }
+}
+
+/// Starts a ready library title, as its home screen tile does.
+fn launch(state: &State, tid: &str) -> Reply {
+    if !crate::scan::valid_tid(tid) {
+        return not_found();
+    }
+    let status = state.games.lock().unwrap().iter()
+        .find(|g| g.src.title_id == tid && g.status != "duplicate").map(|g| g.status);
+    let Some(status) = status else { return not_found() };
+    if state.paused() {
+        return reply(409, "text/plain", "a game is running");
+    }
+    if status != "ready" {
+        return reply(409, "text/plain", "the game is not ready");
+    }
+    match sys::launch_app(tid) {
+        Ok(()) => no_content(),
+        Err(e) => {
+            log!("{tid}: launch: {e}");
+            reply(502, "text/plain", e)
+        }
     }
 }
 
