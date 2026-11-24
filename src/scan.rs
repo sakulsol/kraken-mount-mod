@@ -28,10 +28,11 @@ pub struct Source {
     pub version: String,
     /// Mount of the drive holding `path` ("/data", "/mnt/usb0").
     pub drive: String,
-    /// .pkg or .exfat file size; 0 for folders.
+    /// .pkg or image file size; 0 for folders.
     pub size: u64,
     pub backport: Option<PathBuf>,
-    /// The .exfat image holding the game folder `path` (mounted under image::MOUNT_BASE).
+    /// The .exfat/.ffpkg/.ffpfs/.ffpfsc image holding the game folder `path` (mounted under
+    /// image::MOUNT_BASE; a .ffpfsc's game is in its inner image's mount).
     pub image: Option<PathBuf>,
 }
 

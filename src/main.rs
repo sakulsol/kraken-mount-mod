@@ -839,9 +839,11 @@ fn main() {
         // Image mounts no source of this scan uses (image deleted, moved or unplugged) are released
         // before the games are processed, so a moved image's title sees its old folder gone (Moved).
         // A game folder with a scan error (bad param.json) keeps its mount too: no remount every pass.
-        let keep: HashSet<PathBuf> = r.games.iter().chain(&r.duplicates).filter_map(|g| g.image.as_deref())
-            .chain(r.unstable.iter().map(|(p, _)| p.as_path()).filter(|p| image::is_image(p)))
-            .map(image::mount_point)
+        // A .ffpfsc game keeps both its container mount (image) and its inner mount (path).
+        let keep: HashSet<PathBuf> = r.games.iter().chain(&r.duplicates)
+            .flat_map(|g| [g.image.as_deref().map(image::mount_point), image::mount_of(&g.path)])
+            .flatten()
+            .chain(r.unstable.iter().map(|(p, _)| p.as_path()).filter(|p| image::is_image(p)).map(image::mount_point))
             .chain(r.errors.iter().filter_map(|(p, _)| image::mount_of(p)))
             .collect();
         image::release_unused(&keep);

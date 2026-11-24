@@ -890,13 +890,14 @@ fn eject(state: &State, body: &[u8]) -> Reply {
             return reply(409, "text/plain", e.to_string());
         }
     }
-    // exFAT images on the drive: their titles, then the image mounts (they keep the drive busy).
+    // Images on the drive (.exfat/.ffpkg/.ffpfs/.ffpfsc): inner images and titles, then the image
+    // mounts (they keep the drive busy).
     let prefix = format!("{path}/");
     for (mp, image) in crate::image::mounts() {
         if !image.to_string_lossy().starts_with(&prefix) {
             continue;
         }
-        if let Err(e) = crate::image::release_with_titles(&mp, &mounts) {
+        if let Err(e) = crate::image::release_tree(&mp, &mounts) {
             log!("eject {path}: image {}: {e}", image.display());
             drop(work);
             state.wake();

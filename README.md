@@ -3,7 +3,8 @@
 A PS5 game mounter. It finds games on the internal SSD, the M.2 drive and USB drives.
 
 **Supported formats**: debug FPKG (`.pkg`), game folders (plain, or packed with zstd or LZ4) and
-exFAT images (`.exfat`, as made by ShadowMount+'s `mkexfat.sh`; mounted read-only).
+images as made by ShadowMount+'s tools: `.exfat`, `.ffpkg` (UFS), `.ffpfs` (PFS) and `.ffpfsc`
+(compressed PFS container); mounted read-only.
 For large, demanding games, use the zstd pack format: it performs better than FPKG.
 
 ## How to

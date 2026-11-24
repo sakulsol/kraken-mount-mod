@@ -9,8 +9,8 @@ and USB/extended drives, keeps a per-game cache on the internal SSD, registers e
 screen without installing it, and at launch mounts the game's fakelib plus ampr-emu-ng into the game
 sandbox. Web UI on port 8097 (opened from the "Kraken Mount" home-screen tile).
 
-- Sources: debug FPKG `.pkg` files, game folders (plain, zstd or LZ4 AMPR packs) and `.exfat` images
-  (mounted read-only, then a folder source; `src/image.rs`). Nothing else.
+- Sources: debug FPKG `.pkg` files, game folders (plain, zstd or LZ4 AMPR packs) and `.exfat`/`.ffpkg`/
+  `.ffpfs`/`.ffpfsc` images (mounted read-only, then a folder source; `src/image.rs`). Nothing else.
 - ampr-emu-ng ("ng") is NOT built here: it is its own project. Its released `libSceAmpr.sprx` is
   bundled from `vendor/ampr-emu-ng/`; to update, replace the file, `SHA256SUMS` and `VERSION` from
   the new GitHub release. A file put into `/data/krakenmount/ampr/` by hand overrides it. Do not edit the ng project from here unless the task asks for it.
@@ -28,7 +28,7 @@ sandbox. Web UI on port 8097 (opened from the "Kraken Mount" home-screen tile).
 | `src/config.rs` | `/data/krakenmount/config.toml` settings |
 | `src/storage.rs` | drives and default scan roots |
 | `src/scan.rs` | game discovery, backports, duplicates |
-| `src/image.rs` | `.exfat` images: LVD attach, read-only exfatfs mount, release |
+| `src/image.rs` | game images (exFAT, UFS, PFS, PFSC): LVD attach, read-only mount, release |
 | `src/cache.rs` | per-game cache `/data/krakenmount/caches/<TID>`, freshness, `.built`, purge |
 | `src/ampr_index.rs` | writes `ampr_emu.index` + `ampr_assets.index` for pkg caches |
 | `src/register.rs` | home-screen registration, `/system_ex/app/<TID>` mounts, the tile |

@@ -18,39 +18,57 @@ only into a cache's `fakelib/`, never into `/data/krakenmount/ampr/`.
   Sparse layout extents (holes: a kind-0x40 boundary up to the next boundary) are read as zeros.
 - **Folder**: a directory directly in a scan root with `eboot.bin` and `sce_sys/param.json`.
   Packing: `ampr_zstd.index` present = zstd, else `ampr_assets.index` = lz4, else plain.
-- **exFAT image**: a `.exfat` file (any case) directly in a scan root (or one folder below, as the
-  others), made with SMP's `mkexfat.sh` / `New-OsfExfatImage.ps1`. Mounted read-only (see Images); the game
-  folder is the image root when it has `eboot.bin` + `sce_sys/param.json`, else the first such folder
-  directly inside it (sorted). From then on it is a **Folder** source (`Source.path` = that folder in the
-  mount, `Source.image` = the `.exfat`, `Source.size` = the image size, `drive` = the image's drive).
+- **Image**: a `.exfat` (exfatfs), `.ffpkg` (UFS), `.ffpfs` (PFS) or `.ffpfsc` (PFS container holding
+  one more image) file, any case, directly in a scan root (or one folder below, as the others), as made by
+  SMP's tools. Mounted read-only (see Images); the game folder is the image root when it has `eboot.bin` +
+  `sce_sys/param.json`, else the first such folder directly inside it (sorted). From then on it is a
+  **Folder** source (`Source.path` = that folder in the mount, `Source.image` = the image file,
+  `Source.size` = the image size, `drive` = the image's drive).
 - Any drive. The cache is always on the internal SSD.
 
 ## Images (`src/image.rs`, port of SMP `sm_image.c` / `sm_mount_device.c`, LVD backend only)
-- Attach: `/dev/lvdctl` ioctl `0xC0286D00` (V0, one file layer, no bitmap), sector 512, secondary unit
-  0x10000, flags 0x1c (SMP `LVD_ATTACH_FLAGS_SINGLE_RO`), image type 5 (SAVE_DATA) for an image on
-  `/data` or `/user`, else 0 (SINGLE); wait up to 10 s for `/dev/lvdN`.
-- Mount: `nmount` exfatfs `MNT_RDONLY` with SMP's options (`budgetid=game`, `large=yes`,
-  `timezone=static`, `async`, `noatime`, `ignoreacl`, `automounted`) on
-  `/mnt/krakenmount/<stem>_<fnv1a32(image path)>` (stem: 32 ASCII alnum/`-`/`_` at most), verified by
-  statfs (exfatfs from `/dev/lvdN`). Any failure detaches the unit.
+- Profile (SMP `get_image_mount_profile` and helpers): *nested* = a `.ffpfsc` container or a PFS image
+  inside one; *legacy* = nested, or the image is not under `/data` or `/user`.
+  | | LVD type | sector | secondary unit | attach flags | nmount flags |
+  |---|---|---|---|---|---|
+  | `.exfat` | 5, legacy 0 | 512 | 0x10000 | 0x1c | RDONLY |
+  | `.ffpkg` | 5, legacy 7 | 4096 | 0x10000, legacy = sector | 0x1c, legacy 0x1e | RDONLY, legacy +NOATIME |
+  | `.ffpfs` | 5 | 4096 | 0x10000, legacy = sector | 0x1c | RDONLY |
+  | `.ffpfsc` (outer) | 9 (AcO) | 4096 | sector | 0x1c | RDONLY |
+  | PFS inside `.ffpfsc` | 8 (AcI) | 4096 | sector | 0x1c | RDONLY |
+
+  A non-nested image takes the backing filesystem's block size (statfs `f_bsize`, else `f_iosize`) as sector
+  when smaller than the default. Attach: `/dev/lvdctl` ioctl `0xC0286D00` (V0, one file layer, no bitmap);
+  wait up to 10 s for `/dev/lvdN`.
+- nmount options (SMP's, without `errmsg`/`force`): ufs `budgetid=game,async,noatime,automounted`;
+  exfatfs `budgetid=game,large=yes,timezone=static,async,noatime,ignoreacl,automounted`; pfs (both PFS
+  formats) `sigverify=0,mkeymode=AC,budgetid=game,playgo=0,disc=0,ekpfs=<64 zeros>,async,noatime,automounted`.
+  Mount point `/mnt/krakenmount/[pfsc_]<stem>_<fnv1a32(image path)>` (stem: 27 ASCII alnum/`-`/`_` at
+  most; `pfsc_` for a `.ffpfsc`), verified by statfs (mounted from `/dev/lvdN`). Any failure detaches the unit.
+- `.ffpfsc`: the container is mounted, then its first image (sorted, root first, then one folder below):
+  `pfs_image.dat` or a `.ffpfs`/`.exfat`/`.ffpkg` file. A file without a known extension is PFS. The game
+  folder is in that inner mount; without an inner image, in the container itself.
 - `/data/krakenmount/images/<mount name>` = `<unit>\n<image path>`: a later copy of the payload reuses a
   live mount of the same image; a dead one (drive unplugged) or someone else's at that path is released
   and mounted again.
 - Scan: an image still being written (stability) is not attached; its title id is that of a cache whose
-  stamp source is in its mount point. An image without a game folder is released and not attached again
-  until its size or mtime changes.
+  stamp source is in its mount point. An image without a game is released and not attached again until its
+  size or mtime changes.
 - Release (`image::release_unused`, every pass after the scan, before the games are processed): every
-  mount of ours not used by a game, duplicate, unstable image or scan error of this pass is released:
-  the `/system_ex/app/<TID>` stacks on it (`register::unmount_title`, never MNT_FORCE), then unmount
-  (never MNT_FORCE), LVD detach (`0xC0286D01`), state file and dir removed. Busy = logged, retried next pass.
-  So a moved image's cache sees its old folder gone and relinks (`Fresh::Moved`).
-- Eject: the image mounts whose image is on the drive are released (titles first) before the IPMI eject.
+  mount of ours not used by a game (its image mount and the mount of its folder), duplicate, unstable image
+  or scan error of this pass, nor holding such a mount, is released by `image::release_tree`: the images
+  mounted from inside it first, then the `/system_ex/app/<TID>` stacks on it (`register::unmount_title`,
+  never MNT_FORCE), then unmount (never MNT_FORCE), LVD detach (`0xC0286D01`), state file and dir removed.
+  Busy = logged, retried next pass. So a moved image's cache sees its old folder gone and relinks (`Fresh::Moved`).
+- Eject: the image mounts whose image is on the drive are released (`release_tree`) before the IPMI eject.
 - `/app0` of an image game is read-only (writes fail with EROFS), as in SMP's default `read_only`.
-  `fix_access` skips the image tree (chmod cannot succeed there). Web: `"image"` in a game's JSON, badge
-  and filter chip `exFAT`; the game size in `/api/sizes` is the image size.
-- ponytail: no MD backend, no UFS (`.ffpkg`) or PFS images, no per-image sector override, the detached
-  unit is not checked against the node identity (SMP does), and an image replaced in place while mounted
-  keeps serving the old file until it is released (unplug, move, or a payload restart after a reboot).
+  `fix_access` skips the image tree (chmod cannot succeed there). Web: `"image"` in a game's JSON, the
+  badge is the image's extension (`EXFAT`, `FFPKG`, `FFPFS`, `FFPFSC`), one `IMG` filter chip; the game
+  size in `/api/sizes` is the image size.
+- ponytail: no MD backend, no per-image sector override, no PFS GDDR5 metadata-cache ioctl (SMP's
+  `nested_pfs_index_cache`, off by default there too), one game per `.ffpfsc`, the detached unit is not
+  checked against the node identity (SMP does), and an image replaced in place while mounted keeps serving
+  the old file until it is released (unplug, move, or a payload restart after a reboot).
 
 ## Paths
 | Path | What |
