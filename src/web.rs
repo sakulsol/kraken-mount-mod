@@ -363,7 +363,8 @@ fn route(state: &State, head: &str, body: &[u8], loopback: bool) -> Reply {
             state.wake();
             no_content()
         }
-        ("POST", p) if p.starts_with("/api/playgo/") => post_playgo(state, &p["/api/playgo/".len()..], body),
+        ("POST", p) if p.starts_with("/api/playgo/") => post_title_switch(state, &p["/api/playgo/".len()..], body, Switch::Playgo),
+        ("POST", p) if p.starts_with("/api/ampr_title/") => post_title_switch(state, &p["/api/ampr_title/".len()..], body, Switch::Ampr),
         ("POST", p) if p.starts_with("/api/rebuild/") => rebuild(state, &p["/api/rebuild/".len()..]),
         ("POST", p) if p.starts_with("/api/delete/") => delete(state, &p["/api/delete/".len()..], body),
         ("POST", p) if p.starts_with("/api/launch/") => launch(state, &p["/api/launch/".len()..]),
@@ -387,8 +388,8 @@ fn route(state: &State, head: &str, body: &[u8], loopback: bool) -> Reply {
 fn post_settings(state: &State, body: &[u8]) -> Reply {
     let parsed = serde_json::from_slice::<serde_json::Value>(body)
         .map_err(|e| format!("settings: {e}"))
-        .and_then(|v| Ok((config::from_json(&v)?, v.get("playgo_off").is_some())));
-    let (mut s, has_playgo_off) = match parsed {
+        .and_then(|v| Ok((config::from_json(&v)?, v.get("playgo_off").is_some(), v.get("ampr_off").is_some())));
+    let (mut s, has_playgo_off, has_ampr_off) = match parsed {
         Ok(s) => s,
         Err(e) => {
             log!("settings rejected: {e}");
@@ -402,6 +403,9 @@ fn post_settings(state: &State, body: &[u8]) -> Reply {
         // From the file: a scan pass may have put an older copy into state.settings.
         s.playgo_off = config::load().playgo_off;
     }
+    if !has_ampr_off {
+        s.ampr_off = config::load().ampr_off;
+    }
     if let Err(e) = config::save(&s) {
         log!("settings: save {}: {e}", config::CONFIG_PATH);
         return reply(500, "text/plain", e.to_string());
@@ -413,8 +417,15 @@ fn post_settings(state: &State, body: &[u8]) -> Reply {
     no_content()
 }
 
-/// POST /api/playgo/<TID>, body `on` or `off`: the bundled PlayGo stub for one game (playgo_off).
-fn post_playgo(state: &State, tid: &str, body: &[u8]) -> Reply {
+#[derive(Clone, Copy)]
+enum Switch {
+    Playgo,
+    Ampr,
+}
+
+/// POST /api/playgo/<TID> (the bundled PlayGo stub, playgo_off) or /api/ampr_title/<TID>
+/// (ampr-emu-ng for a folder game, ampr_off), body `on` or `off`: one game's switch.
+fn post_title_switch(state: &State, tid: &str, body: &[u8], which: Switch) -> Reply {
     if !crate::scan::valid_tid(tid) || state.source(tid).is_none() {
         return not_found();
     }
@@ -423,18 +434,26 @@ fn post_playgo(state: &State, tid: &str, body: &[u8]) -> Reply {
         b"off" => true,
         _ => return reply(400, "text/plain", "expected on or off"),
     };
+    let what = match which {
+        Switch::Playgo => "PlayGo stub",
+        Switch::Ampr => "ampr-emu-ng",
+    };
     let mut cur = state.settings.lock().unwrap();
     // From the file, not state.settings: a scan pass may have put an older copy there.
     let mut s = config::load();
-    s.playgo_off.retain(|t| t != tid);
+    let list = match which {
+        Switch::Playgo => &mut s.playgo_off,
+        Switch::Ampr => &mut s.ampr_off,
+    };
+    list.retain(|t| t != tid);
     if off {
-        s.playgo_off.push(tid.to_string());
+        list.push(tid.to_string());
     }
     if let Err(e) = config::save(&s) {
-        log!("{tid}: PlayGo stub: save {}: {e}", config::CONFIG_PATH);
+        log!("{tid}: {what}: save {}: {e}", config::CONFIG_PATH);
         return reply(500, "text/plain", e.to_string());
     }
-    log!("{tid}: PlayGo stub {}", if off { "off" } else { "on" });
+    log!("{tid}: {what} {}", if off { "off" } else { "on" });
     *cur = s;
     drop(cur);
     state.wake();
@@ -503,7 +522,10 @@ fn report_text(g: &Game, s: &Settings, ampr: &serde_json::Value, crash: Option<&
         Kind::Folder(Packing::Zstd) => "folder (zstd)",
         Kind::Folder(Packing::Lz4) => "folder (lz4)",
     };
-    let ampr = format!("{} {}", ampr["kind"].as_str().unwrap_or("?"), ampr["version"].as_str().unwrap_or("")).trim_end().to_string();
+    let mut ampr = format!("{} {}", ampr["kind"].as_str().unwrap_or("?"), ampr["version"].as_str().unwrap_or("")).trim_end().to_string();
+    if src.kind != Kind::Pkg && (!s.inject_ampr || s.ampr_off.iter().any(|t| *t == src.title_id)) {
+        ampr += if s.inject_ampr { " (off for this game: ampr_off)" } else { " (not injected: inject_ampr off)" };
+    }
     let playgo = if !s.add_emulators { "not added (add_emulators off)" }
         else if s.playgo_off.iter().any(|t| *t == src.title_id) { "off" } else { "on" };
     let crash = crash.map_or("none recorded".to_string(), |c| {
@@ -528,9 +550,9 @@ fn report_text(g: &Game, s: &Settings, ampr: &serde_json::Value, crash: Option<&
 }
 
 fn api_state(state: &State) -> Vec<u8> {
-    let playgo_off = {
+    let (playgo_off, ampr_off) = {
         let s = state.settings.lock().unwrap();
-        s.add_emulators.then(|| s.playgo_off.clone())
+        (s.add_emulators.then(|| s.playgo_off.clone()), s.ampr_off.clone())
     };
     let crashes = crate::crash::load();
     // A rebuild asked for but not started yet (the pass picks it up, or a game is running).
@@ -538,6 +560,8 @@ fn api_state(state: &State) -> Vec<u8> {
     let games: Vec<_> = state.games.lock().unwrap().iter().map(|g| {
         let mut v = game_json(g, playgo_off.as_deref(), crashes.get(&g.src.title_id));
         v["rebuild_queued"] = queued.contains(&g.src.title_id).into();
+        // The per-game ampr-emu-ng switch (folder games only: a pkg always gets it).
+        v["ampr_off"] = ampr_off.iter().any(|t| *t == g.src.title_id).into();
         v
     }).collect();
     let all = storage::drives();

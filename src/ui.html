@@ -503,6 +503,9 @@ button:disabled { opacity: 0.5; cursor: default; }
       <label class="row m-row" id="m-playgo-row" hidden><span><span class="lbl" data-i18n="playgoStub">PlayGo stub</span>
         <span class="hint" data-i18n="playgoHint">Turn off if the game stays on a black screen; turn on if it asks to finish the download.</span></span>
         <input type="checkbox" id="m-playgo"></label>
+      <label class="row m-row" id="m-ampr-row" hidden><span><span class="lbl" data-i18n="amprSwitch">ampr-emu-ng</span>
+        <span class="hint" data-i18n="amprHint">Turn off if the game closes right after the ampr-emu-ng notice.</span></span>
+        <input type="checkbox" id="m-ampr"></label>
       <div class="m-err" id="m-err"></div>
     </div>
     <div class="storage-line">
@@ -570,6 +573,7 @@ var MSG = {
     fCrash: 'Last crash', crashHint: 'The game crashed while running. That usually comes from the dump, ampr-emu-ng or the PlayGo stub, not the mount. Use Report when you open an issue.', report: 'Report',
     fBackport: 'Backport', yes: 'Yes', no: 'No', notBuilt: 'not built',
     playgoStub: 'PlayGo stub', playgoHint: 'Turn off if the game stays on a black screen; turn on if it asks to finish the download.',
+    amprSwitch: 'ampr-emu-ng', amprHint: 'Turn off if the game closes right after the ampr-emu-ng notice.',
     szGame: 'Game', szDlc: 'DLC', szSave: 'Save', szCache: 'Cache',
     szPart: '{part} {size}', szNa: '{part} n/a', szTotal: 'Total {size}',
     sizesNone: 'Sizes unavailable', sizesLoading: 'Loading sizes...',
@@ -659,6 +663,7 @@ var MSG = {
     fCrash: 'Последний сбой', crashHint: 'Игра упала во время работы. Обычно причина в дампе, ampr-emu-ng или заглушке PlayGo, а не в монтировании. Нажмите «Отчёт», когда создаёте issue.', report: 'Отчёт',
     fBackport: 'Бэкпорт', yes: 'Да', no: 'Нет', notBuilt: 'не собран',
     playgoStub: 'Заглушка PlayGo', playgoHint: 'Выключите, если игра остаётся на чёрном экране; включите, если она просит завершить загрузку.',
+    amprSwitch: 'ampr-emu-ng', amprHint: 'Выключите, если игра закрывается сразу после уведомления ampr-emu-ng.',
     szGame: 'Игра', szDlc: 'DLC', szSave: 'Сохранения', szCache: 'Кеш',
     szPart: '{part} {size}', szNa: '{part} н/д', szTotal: 'Всего {size}',
     sizesNone: 'Размеры недоступны', sizesLoading: 'Загрузка размеров...',
@@ -746,6 +751,7 @@ var MSG = {
     fCrash: '上次崩溃', crashHint: '游戏在运行时崩溃。原因通常是 dump、ampr-emu-ng 或 PlayGo 存根，而不是挂载。提交 issue 时请使用“报告”。', report: '报告',
     fBackport: '向下移植', yes: '是', no: '否', notBuilt: '未构建',
     playgoStub: 'PlayGo 存根', playgoHint: '如果游戏停留在黑屏，请关闭；如果游戏要求完成下载，请开启。',
+    amprSwitch: 'ampr-emu-ng', amprHint: '如果游戏在 ampr-emu-ng 通知后立即关闭，请关闭。',
     szGame: '游戏', szDlc: 'DLC', szSave: '存档', szCache: '缓存',
     szPart: '{part} {size}', szNa: '{part} 不可用', szTotal: '总计 {size}',
     sizesNone: '大小不可用', sizesLoading: '正在加载大小...',
@@ -833,6 +839,7 @@ var MSG = {
     fCrash: 'Letzter Absturz', crashHint: 'Das Spiel ist während des Spielens abgestürzt. Meist liegt es am Dump, an ampr-emu-ng oder am PlayGo-Stub, nicht am Einbinden. Nutze „Bericht“, wenn du ein Issue eröffnest.', report: 'Bericht',
     fBackport: 'Backport', yes: 'Ja', no: 'Nein', notBuilt: 'nicht erstellt',
     playgoStub: 'PlayGo-Stub', playgoHint: 'Ausschalten, wenn das Spiel auf einem schwarzen Bildschirm bleibt; einschalten, wenn es verlangt, den Download abzuschließen.',
+    amprSwitch: 'ampr-emu-ng', amprHint: 'Ausschalten, wenn sich das Spiel direkt nach dem ampr-emu-ng-Hinweis schließt.',
     szGame: 'Spiel', szDlc: 'DLC', szSave: 'Spielstand', szCache: 'Cache',
     szPart: '{part} {size}', szNa: '{part} k. A.', szTotal: 'Gesamt {size}',
     sizesNone: 'Größen nicht verfügbar', sizesLoading: 'Größen werden geladen...',
@@ -920,6 +927,7 @@ var MSG = {
     fCrash: 'Último cierre inesperado', crashHint: 'El juego falló mientras se ejecutaba. Suele deberse al dump, a ampr-emu-ng o al stub de PlayGo, no al montaje. Usa Informe al abrir un issue.', report: 'Informe',
     fBackport: 'Backport', yes: 'Sí', no: 'No', notBuilt: 'sin crear',
     playgoStub: 'Stub de PlayGo', playgoHint: 'Desactívalo si el juego se queda en pantalla negra; actívalo si pide terminar la descarga.',
+    amprSwitch: 'ampr-emu-ng', amprHint: 'Desactívalo si el juego se cierra justo después del aviso de ampr-emu-ng.',
     szGame: 'Juego', szDlc: 'DLC', szSave: 'Partidas', szCache: 'Caché',
     szPart: '{part} {size}', szNa: '{part} n/d', szTotal: 'Total {size}',
     sizesNone: 'Tamaños no disponibles', sizesLoading: 'Cargando tamaños...',
@@ -1007,6 +1015,7 @@ var MSG = {
     fCrash: 'Dernier plantage', crashHint: 'Le jeu a planté pendant l\'exécution. La cause est souvent le dump, ampr-emu-ng ou le stub PlayGo, pas le montage. Utilisez Rapport pour ouvrir une issue.', report: 'Rapport',
     fBackport: 'Backport', yes: 'Oui', no: 'Non', notBuilt: 'non créé',
     playgoStub: 'Stub PlayGo', playgoHint: "Désactivez-le si le jeu reste sur un écran noir ; activez-le s'il demande de terminer le téléchargement.",
+    amprSwitch: 'ampr-emu-ng', amprHint: 'Désactivez-le si le jeu se ferme juste après la notification ampr-emu-ng.',
     szGame: 'Jeu', szDlc: 'DLC', szSave: 'Sauvegarde', szCache: 'Cache',
     szPart: '{part} {size}', szNa: '{part} n/d', szTotal: 'Total {size}',
     sizesNone: 'Tailles indisponibles', sizesLoading: 'Chargement des tailles...',
@@ -1094,6 +1103,7 @@ var MSG = {
     fCrash: '最後のクラッシュ', crashHint: 'ゲームが実行中にクラッシュしました。原因は多くの場合ダンプ、ampr-emu-ng、PlayGo スタブで、マウントではありません。issue を作るときは「レポート」を使ってください。', report: 'レポート',
     fBackport: 'バックポート', yes: 'はい', no: 'いいえ', notBuilt: '未作成',
     playgoStub: 'PlayGo スタブ', playgoHint: 'ゲームが黒い画面のままならオフに、ダウンロードの完了を求められたらオンにします。',
+    amprSwitch: 'ampr-emu-ng', amprHint: 'ampr-emu-ng の通知の直後にゲームが終了する場合はオフにします。',
     szGame: 'ゲーム', szDlc: 'DLC', szSave: 'セーブ', szCache: 'キャッシュ',
     szPart: '{part} {size}', szNa: '{part} 不明', szTotal: '合計 {size}',
     sizesNone: 'サイズを取得できません', sizesLoading: 'サイズを読み込んでいます...',
@@ -1181,6 +1191,7 @@ var MSG = {
     fCrash: 'Última falha', crashHint: 'O jogo falhou durante a execução. Geralmente a causa é o dump, o ampr-emu-ng ou o stub do PlayGo, não a montagem. Use Relatório ao abrir uma issue.', report: 'Relatório',
     fBackport: 'Backport', yes: 'Sim', no: 'Não', notBuilt: 'não criado',
     playgoStub: 'Stub do PlayGo', playgoHint: 'Desligue se o jogo ficar na tela preta; ligue se ele pedir para concluir o download.',
+    amprSwitch: 'ampr-emu-ng', amprHint: 'Desligue se o jogo fechar logo após o aviso do ampr-emu-ng.',
     szGame: 'Jogo', szDlc: 'DLC', szSave: 'Salvamento', szCache: 'Cache',
     szPart: '{part} {size}', szNa: '{part} n/d', szTotal: 'Total {size}',
     sizesNone: 'Tamanhos indisponíveis', sizesLoading: 'Carregando tamanhos...',
@@ -1268,6 +1279,7 @@ var MSG = {
     fCrash: 'Ultimo crash', crashHint: 'Il gioco è andato in crash durante l\'esecuzione. Di solito la causa è il dump, ampr-emu-ng o lo stub PlayGo, non il montaggio. Usa Report quando apri una issue.', report: 'Report',
     fBackport: 'Backport', yes: 'Sì', no: 'No', notBuilt: 'non creata',
     playgoStub: 'Stub PlayGo', playgoHint: 'Disattivalo se il gioco resta su schermo nero; attivalo se chiede di completare il download.',
+    amprSwitch: 'ampr-emu-ng', amprHint: 'Disattivalo se il gioco si chiude subito dopo l\'avviso di ampr-emu-ng.',
     szGame: 'Gioco', szDlc: 'DLC', szSave: 'Salvataggi', szCache: 'Cache',
     szPart: '{part} {size}', szNa: '{part} n/d', szTotal: 'Totale {size}',
     sizesNone: 'Dimensioni non disponibili', sizesLoading: 'Caricamento delle dimensioni...',
@@ -1355,6 +1367,7 @@ var MSG = {
     fCrash: '마지막 충돌', crashHint: '게임이 실행 중에 충돌했습니다. 원인은 보통 덤프, ampr-emu-ng 또는 PlayGo 스텁이며 마운트가 아닙니다. issue를 열 때 \'보고서\'를 사용하세요.', report: '보고서',
     fBackport: '백포트', yes: '예', no: '아니요', notBuilt: '생성 안 됨',
     playgoStub: 'PlayGo 스텁', playgoHint: '게임이 검은 화면에서 멈추면 끄고, 다운로드를 완료하라고 하면 켜세요.',
+    amprSwitch: 'ampr-emu-ng', amprHint: 'ampr-emu-ng 알림 직후 게임이 종료되면 끄세요.',
     szGame: '게임', szDlc: 'DLC', szSave: '세이브', szCache: '캐시',
     szPart: '{part} {size}', szNa: '{part} 해당 없음', szTotal: '합계 {size}',
     sizesNone: '크기를 알 수 없음', sizesLoading: '크기를 불러오는 중...',
@@ -1442,6 +1455,7 @@ var MSG = {
     fCrash: 'آخر تعطّل', crashHint: 'تعطّلت اللعبة أثناء التشغيل. السبب عادةً النسخة (dump) أو ampr-emu-ng أو بديل PlayGo، وليس التحميل. استخدم «تقرير» عند فتح issue.', report: 'تقرير',
     fBackport: 'الباكبورت', yes: 'نعم', no: 'لا', notBuilt: 'لم تُنشأ',
     playgoStub: 'بديل PlayGo', playgoHint: 'أوقفه إذا بقيت اللعبة على شاشة سوداء، وشغّله إذا طلبت إكمال التنزيل.',
+    amprSwitch: 'ampr-emu-ng', amprHint: 'أوقفه إذا أُغلقت اللعبة مباشرةً بعد إشعار ampr-emu-ng.',
     szGame: 'اللعبة', szDlc: 'DLC', szSave: 'الحفظ', szCache: 'الذاكرة المؤقتة',
     szPart: '{part} {size}', szNa: '{part} غير متاح', szTotal: 'الإجمالي {size}',
     sizesNone: 'الأحجام غير متاحة', sizesLoading: 'جارٍ تحميل الأحجام...',
@@ -2011,6 +2025,12 @@ function renderModal() {
   $('m-playgo-row').hidden = !(g.playgo === true || g.playgo_off);
   if (!pg._busy) pg.checked = !g.playgo_off;
   pg.disabled = !!pg._busy || g.status === 'duplicate' || g.status === 'building';
+  // The ampr-emu-ng switch: folder games only (a pkg always gets it). ponytail: shown while
+  // inject_ampr is off too, where it changes nothing until inject_ampr is back on.
+  var am = $('m-ampr');
+  $('m-ampr-row').hidden = g.kind === 'pkg';
+  if (!am._busy) am.checked = !g.ampr_off;
+  am.disabled = !!am._busy || g.status === 'duplicate' || g.status === 'building';
 }
 function renderSizes(sizes) {
   var stack = $('m-stack'), legend = $('m-legend');
@@ -2101,29 +2121,34 @@ $('m-play').onclick = async function () {
   if (modalOpen()) renderModal();
   schedule(300);
 };
-$('m-playgo').onchange = async function () {
-  var box = this, g = openTid && findGame(openTid);
-  if (!g) return;
-  var id = gameId(g), on = box.checked;
-  box._busy = true;
-  box.disabled = true;
-  try {
-    var r = await fetch('/api/playgo/' + encodeURIComponent(g.title_id), { method: 'POST', body: on ? 'on' : 'off' });
-    if (!r.ok) throw new Error((await r.text()) || 'HTTP ' + r.status);
-    // Until the next state arrives, draw the new value.
-    g.playgo_off = !on;
-    modalActionError = '';
-    if (state && state.paused) { queued = true; setBanner('paused', true, pausedText); }
-  } catch (e) {
-    if (modalOpen() && openTid === id) modalActionError = e.message;
-  }
-  box._busy = false;
-  if (modalOpen() && openTid === id) {
-    renderModal();
-    if (!box.disabled && !$('m-playgo-row').hidden) box.focus();
-  }
-  schedule(300);
-};
+// The per-game switches: PlayGo stub (/api/playgo, playgo_off) and ampr-emu-ng (/api/ampr_title, ampr_off).
+function titleSwitch(boxId, rowId, api, field) {
+  $(boxId).onchange = async function () {
+    var box = this, g = openTid && findGame(openTid);
+    if (!g) return;
+    var id = gameId(g), on = box.checked;
+    box._busy = true;
+    box.disabled = true;
+    try {
+      var r = await fetch(api + encodeURIComponent(g.title_id), { method: 'POST', body: on ? 'on' : 'off' });
+      if (!r.ok) throw new Error((await r.text()) || 'HTTP ' + r.status);
+      // Until the next state arrives, draw the new value.
+      g[field] = !on;
+      modalActionError = '';
+      if (state && state.paused) { queued = true; setBanner('paused', true, pausedText); }
+    } catch (e) {
+      if (modalOpen() && openTid === id) modalActionError = e.message;
+    }
+    box._busy = false;
+    if (modalOpen() && openTid === id) {
+      renderModal();
+      if (!box.disabled && !$(rowId).hidden) box.focus();
+    }
+    schedule(300);
+  };
+}
+titleSwitch('m-playgo', 'm-playgo-row', '/api/playgo/', 'playgo_off');
+titleSwitch('m-ampr', 'm-ampr-row', '/api/ampr_title/', 'ampr_off');
 $('m-delete').onclick = function () {
   var g = openTid && findGame(openTid);
   if (!g) return;
@@ -2429,7 +2454,9 @@ function moveInSettings(t, key) {
 // The game sheet's controls in page order: its enabled buttons and the PlayGo switch when shown.
 function modalControls() {
   return Array.prototype.slice.call(document.querySelectorAll('#modal button:not([disabled]), #modal input:not([disabled])'))
-    .filter(function (c) { return c.id !== 'm-playgo' || !$('m-playgo-row').hidden; });
+    .filter(function (c) {
+      return (c.id !== 'm-playgo' || !$('m-playgo-row').hidden) && (c.id !== 'm-ampr' || !$('m-ampr-row').hidden);
+    });
 }
 function moveInModal(key) {
   var list = modalControls();

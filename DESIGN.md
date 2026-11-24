@@ -112,6 +112,7 @@ A flat TOML subset: `key = value` with strings, `true`/`false`, integers and arr
 | `inject_ampr` | true | copy `/data/krakenmount/ampr/*` on top of a folder game's fakelib; pkg games always get it (pkg mode exists only in ampr-emu-ng) (a change only refreshes `fakelib/`) |
 | `add_emulators` | true | add the bundled DLC (dlc_emu) and PlayGo (pgo_stub) emulators to a game's fakelib when it needs them and ships none (a change only refreshes `fakelib/`) |
 | `playgo_off` | [] | array of title ids (`playgo_off = ["PPSA01556"]`) that get no bundled PlayGo stub: pgo_stub is neither added nor upgraded, a `libScePlayGo.sprx` the game or backport ships stays as shipped; the dlc_emu set is unaffected. Per game from the UI (`POST /api/playgo/<TID>`); a change only refreshes `fakelib/` |
+| `ampr_off` | [] | array of title ids of folder games that get no ampr-emu-ng even with `inject_ampr` (a game that dies right after the ampr-emu-ng notice); pkg games always get it. Per game from the UI (`POST /api/ampr_title/<TID>`); a change only refreshes `fakelib/` |
 | `ampr_auto_update` | true | once per start, download a newer ampr-emu-ng release from GitHub (a hand-placed `libSceAmpr.sprx` is kept) |
 | `backports` | true | apply `<scan root>/backports/<TID>*` |
 | `scan_interval_seconds` | 10 | scan loop period (1..3600) |
@@ -170,7 +171,7 @@ is ignored as a whole). The web UI edits the same file.
   is added or upgraded (no mixed set), logged `<TID>: fakelib: kept the game's dlc_emu files (not a known release)`; pgo_stub goes per file.
   A title in `playgo_off` skips pgo_stub entirely (no add, no upgrade, the eboot is not searched), logged
   `<TID>: fakelib: PlayGo stub off (playgo_off)`; `fakelib/` starts from scratch, so a stub added earlier is gone.
-  Then, with `inject_ampr` and always for a pkg game (the package's own `libSceAmpr.sprx` cannot read the
+  Then, with `inject_ampr` (not for a folder game in `ampr_off`) and always for a pkg game (the package's own `libSceAmpr.sprx` cannot read the
   `.pkg` named in `kraken.image`), every file of `/data/krakenmount/ampr/` (not `libkernel.sprx`) is copied on top,
   so ours wins over the game's own `libSceAmpr.sprx`, except a game's or backport's ampr-emu-ng strictly newer than
   ours (the `ampr-emu-ng X.Y.Z` identity in both files; ours without one counts as older), which is kept and logged
@@ -455,6 +456,9 @@ If a newer copy took the port meanwhile, this copy quits (not while a game runs)
 - `POST /api/playgo/<TID>`, body exactly `on` or `off` -> removes the title from / adds it to `playgo_off`,
   saves, applies, rescans, logs `<TID>: PlayGo stub on|off`, 204; 404 for an invalid or absent library
   title, 400 for any other body.
+- `POST /api/ampr_title/<TID>`, body exactly `on` or `off` -> removes the title from / adds it to `ampr_off`,
+  saves, applies, rescans, logs `<TID>: ampr-emu-ng on|off`, 204; 404 / 400 as `/api/playgo`. A game's JSON in
+  `/api/state` has `ampr_off: bool`; the game sheet shows the switch for folder games (not pkg).
 - `GET /api/ampr` -> `{kind: "bundled"|"downloaded"|"hand"|"missing"|"error", version, updating}` of
   `ampr/libSceAmpr.sprx`; `POST /api/ampr/update` -> forced update, answered when done: 200 + result text,
   409 while one runs, 502 + error text.

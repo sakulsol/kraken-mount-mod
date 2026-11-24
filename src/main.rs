@@ -46,6 +46,7 @@ fn toast(s: &Settings, msg: &str) {
 fn inputs_key(src: &Source, s: &Settings) -> String {
     let mut k = cache::stamp(src, s).to_string();
     k += &format!("|playgo_off={}", s.playgo_off.contains(&src.title_id));
+    k += &format!("|ampr_off={}", s.ampr_off.contains(&src.title_id));
     for p in cache::inputs(src, s) {
         let mtime = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
         k += &format!("|{}={mtime:?}", p.display());

@@ -558,11 +558,11 @@ fn ampr_state(src: &Source, s: &Settings) -> serde_json::Value {
     serde_json::Value::Object(m)
 }
 
-/// Whether fakelib/ gets the ampr dir's files: with inject_ampr, and always for a pkg (#73):
-/// pkg mode exists only in ampr-emu-ng, the package's own libSceAmpr.sprx cannot read the .pkg
-/// named in kraken.image.
+/// Whether fakelib/ gets the ampr dir's files: with inject_ampr unless the title is in ampr_off,
+/// and always for a pkg (#73): pkg mode exists only in ampr-emu-ng, the package's own
+/// libSceAmpr.sprx cannot read the .pkg named in kraken.image.
 fn injects_ampr(src: &Source, s: &Settings) -> bool {
-    s.inject_ampr || src.kind == Kind::Pkg
+    (s.inject_ampr && !s.ampr_off.iter().any(|t| *t == src.title_id)) || src.kind == Kind::Pkg
 }
 
 /// libkernel.sprx from the ampr dir would replace the system one for every game: never copied.
@@ -813,7 +813,7 @@ pub fn check(src: &Source, s: &Settings) -> Fresh {
     // Only "ampr" and "emus" count: the "playgo" memo never triggers a refresh.
     let new = fakelib_state(src, s);
     if ["ampr", "emus"].iter().any(|&k| had.get(k) != new.get(k)) {
-        return Fresh::Fakelib(format!("{AMPR_DIR}, inject_ampr, the bundled emulators or playgo_off changed"));
+        return Fresh::Fakelib(format!("{AMPR_DIR}, inject_ampr, ampr_off, the bundled emulators or playgo_off changed"));
     }
     Fresh::Fresh
 }
