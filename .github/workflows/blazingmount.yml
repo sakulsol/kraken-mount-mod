@@ -1,0 +1,59 @@
+# Builds BlazingMount (https://github.com/Kaoz625/blazingmount, GPL-3.0-or-later) for this console:
+# the libSceAmpr.sprx link fork (drakmor/ampr_emu + BlazingMount's overlay), blazingmountd.elf (the
+# console payload, with the fork embedded) and the host scripts. No prebuilt binary comes from upstream.
+name: blazingmount
+
+on:
+  push:
+    branches: [blazingmount-build]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BM_REPO: https://github.com/Kaoz625/blazingmount
+  BM_REV: 5fa66fc
+  AMPR_EMU_REPO: https://github.com/drakmor/ampr_emu
+  SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.43/ps5-payload-sdk.zip
+  SDK_SHA256: a9cc9929f21b2b2c5d5b309f3bab4997067c45281c0622cf4838b1aecba66fcb
+
+jobs:
+  console:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Toolchain (clang/lld 19, cmake, PS5 payload SDK v0.43)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-19 lld-19 llvm-19 make cmake python3 unzip
+          echo "/usr/lib/llvm-19/bin" >> "$GITHUB_PATH"
+          curl -fsSL --retry 3 "$SDK_URL" -o /tmp/sdk.zip
+          echo "$SDK_SHA256  /tmp/sdk.zip" | sha256sum -c -
+          sudo unzip -q /tmp/sdk.zip -d /opt
+          echo "PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk" >> "$GITHUB_ENV"
+          echo "PS5_CLANG=/usr/lib/llvm-19/bin/clang" >> "$GITHUB_ENV"
+      - name: BlazingMount source
+        run: |
+          git clone -q "$BM_REPO" bm
+          git -C bm checkout -q "$BM_REV"
+          git -C bm log -1 --format='%H %s'
+      - name: libSceAmpr.sprx link fork
+        run: |
+          cd bm/console/link-fork
+          WORK="$RUNNER_TEMP/fork" sh tools/build-fork.sh
+          cp build/libSceAmpr.sprx prebuilt/libSceAmpr.sprx
+      - name: blazingmountd.elf
+        run: |
+          cd bm/console/blazingmountd
+          BM_REV="$BM_REV" sh build.sh
+      - name: Package
+        run: |
+          mkdir -p dist/console dist/host
+          cp bm/console/link-fork/build/libSceAmpr.sprx dist/console/
+          cp bm/console/blazingmountd/out/blazingmountd.elf dist/console/
+          cp -r bm/host bm/install bm/docs bm/README.md bm/LICENSE bm/CREDITS.md dist/host/ 2>/dev/null || true
+          (cd dist && sha256sum console/* > SHA256SUMS && cat SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blazingmount-${{ env.BM_REV }}
+          path: dist
