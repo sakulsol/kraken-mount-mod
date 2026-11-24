@@ -61,11 +61,13 @@ jobs:
           (cd bm && git archive --format=tar HEAD host install docs README.md LICENSE COPYING CREDITS.md) | tar -x -C pc/blazingmount
           cp bm/host/serve/dirserve.py pc/blazingmount/host/serve/dirserve.py
           cp bm/install/blazingmount-install.py pc/blazingmount/install/blazingmount-install.py
+          cp bm/host/engine/mkgame.py pc/blazingmount/host/engine/mkgame.py
+          cp bm/WINDOWS-PATCH pc/blazingmount/WINDOWS-PATCH
           mkdir -p pc/blazingmount/console/link-fork/prebuilt
           cp dist/console/libSceAmpr.sprx pc/blazingmount/console/link-fork/prebuilt/
           cp -r pc/blazingmount dist/
           (cd dist && sha256sum console/* > SHA256SUMS && cat SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: blazingmount-${{ env.BM_REV }}
+          name: blazingmount-pc-v3
           path: dist

@@ -25,4 +25,14 @@ sub(root + "/install/blazingmount-install.py",
 sub(root + "/install/blazingmount-install.py",
     "    a = ap.parse_args()\n",
     "    a = ap.parse_args()\n    global FTP_PORT\n    FTP_PORT = a.ftp_port\n")
+# 3. mkgame.py: the public repo lacks decrypt_fself (external) and mkbackport.py (its .handoff says so). They only
+#    serve to read the eboot's DT_NEEDED and import NIDs; in a fake-signed SELF (scene dumps) and a plain ELF the
+#    dynamic string table is plaintext, so without them the names are found by scanning the eboot's bytes.
+sub(root + "/host/engine/mkgame.py",
+    "        sys.path.insert(0, os.path.join(BACKPORT_TOOLS, \"src\"))\n        from decrypt_fself import UnsignedELFConverter\n        return UnsignedELFConverter().convert_file(raw, dst)\n",
+    "        sys.path.insert(0, os.path.join(BACKPORT_TOOLS, \"src\"))\n        try:\n            from decrypt_fself import UnsignedELFConverter\n        except ImportError:\n            shutil.copyfile(raw, dst)   # Windows build: no decrypt_fself; elf_needs scans the SELF's plaintext strings\n            return True\n        return UnsignedELFConverter().convert_file(raw, dst)\n")
+sub(root + "/host/engine/mkgame.py",
+    "    from mkbackport import Dyn  # same folder as this file\n    data = open(path, \"rb\").read()\n",
+    "    data = open(path, \"rb\").read()\n    try:\n        from mkbackport import Dyn  # same folder as this file\n    except ImportError:\n        # Windows build: no mkbackport.py. Library names and NID#lib#mod import strings from the raw bytes.\n        names = sorted(set(m.decode() for m in re.findall(rb\"lib[A-Za-z0-9_]+\\.(?:prx|sprx)\", data)))\n        nids = set(m.decode() for m in re.findall(rb\"([A-Za-z0-9+\\-_]{11})#[A-Za-z0-9]{1,3}#[A-Za-z0-9]{1,3}\", data))\n        return names, nids\n")
+open(root + "/WINDOWS-PATCH", "w").write("3\n")
 print("windows patches applied")
