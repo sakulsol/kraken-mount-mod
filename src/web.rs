@@ -515,6 +515,9 @@ fn report_text(g: &Game, s: &Settings, ampr: &serde_json::Value, crash: Option<&
         env!("CARGO_PKG_VERSION"), src.title_name, src.title_id, src.version, src.path.display(), src.drive,
         g.status, g.error.as_deref().map_or(String::new(), |e| format!(" ({e})")),
     );
+    if let Some(image) = &src.image {
+        out += &format!("Image: {}\n", image.display());
+    }
     let lines: Vec<&str> = log.lines().filter(|l| l.contains(src.title_id.as_str())).collect();
     out += &format!("\nkraken.log, last {} lines with {}:\n", REPORT_LOG_LINES, src.title_id);
     for l in &lines[lines.len().saturating_sub(REPORT_LOG_LINES)..] {

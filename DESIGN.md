@@ -446,7 +446,7 @@ If a newer copy took the port meanwhile, this copy quits (not while a game runs)
   rebuild_queued: bool (a rebuild asked for, not started yet; the UI keeps Rebuild disabled through it and while the game is pending, checking or building)}],
   drives:[{mount, label, kind, total, free, ejectable}], cache:{path, size, free, low_space, ampr_present}, log:[last 100 lines of the last 64 KiB]}`
 - `GET /api/report/<TID>` -> plain text for an issue: Kraken Mount version, a firmware line to fill in,
-  the game (name, title id, version, source, kind, drive, status and error), ampr-emu-ng (`/api/ampr`
+  the game (name, title id, version, source, kind, drive, status and error; the image file of an image game), ampr-emu-ng (`/api/ampr`
   kind and version), the PlayGo stub (on, off, or not added), the last crash, and the last 40 lines of
   the log tail (64 KiB) that contain the title id; 404 for an invalid or absent library title.
   The game sheet's Report button opens it.
