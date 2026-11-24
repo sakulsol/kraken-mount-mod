@@ -34,5 +34,10 @@ sub(root + "/host/engine/mkgame.py",
 sub(root + "/host/engine/mkgame.py",
     "    from mkbackport import Dyn  # same folder as this file\n    data = open(path, \"rb\").read()\n",
     "    data = open(path, \"rb\").read()\n    try:\n        from mkbackport import Dyn  # same folder as this file\n    except ImportError:\n        # Windows build: no mkbackport.py. Library names and NID#lib#mod import strings from the raw bytes.\n        names = sorted(set(m.decode() for m in re.findall(rb\"lib[A-Za-z0-9_]+\\.(?:prx|sprx)\", data)))\n        nids = set(m.decode() for m in re.findall(rb\"([A-Za-z0-9+\\-_]{11})#[A-Za-z0-9]{1,3}#[A-Za-z0-9]{1,3}\", data))\n        return names, nids\n")
+# 4. blazingmount-install.py: the console FTP (etaHEN) decrypts SELF files (eboot.bin, .prx, .sprx, .elf, .self) on
+#    download, so a read-back hash never matches what was uploaded: those are checked by their size (FTP SIZE).
+sub(root + "/install/blazingmount-install.py",
+    "        want = sha256_file(lp)\n        got = websrv_sha256(console, remote)\n",
+    "        if rel.lower().endswith((\".prx\", \".sprx\", \".elf\", \".self\")) or rel.lower().endswith(\"eboot.bin\"):\n            ftp.voidcmd(\"TYPE I\")\n            got_size = ftp.size(remote)\n            if got_size != os.path.getsize(lp):\n                sys.exit(\"VERIFY FAILED %s: size %s != %d\" % (rel, got_size, os.path.getsize(lp)))\n            continue\n        want = sha256_file(lp)\n        got = websrv_sha256(console, remote)\n")
 open(root + "/WINDOWS-PATCH", "w").write("3\n")
 print("windows patches applied")
